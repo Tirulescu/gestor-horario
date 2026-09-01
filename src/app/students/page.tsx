@@ -1,0 +1,12 @@
+"use client";
+
+import StudentsClient from "@/components/StudentsClient";
+import { GraduationCap } from "lucide-react";
+
+export default function StudentsPage() {
+  return (
+    <div className="space-y-4">
+      <StudentsClient />
+    </div>
+  );
+}
