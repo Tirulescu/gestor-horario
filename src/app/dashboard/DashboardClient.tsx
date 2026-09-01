@@ -312,6 +312,11 @@ export default function DashboardClient() {
     if (day !== target.dayOfWeek) body.dayOfWeek = day;
     if (start !== target.startHour) body.startHour = start;
     if (end !== target.endHour) body.endHour = end;
+    if (Object.keys(body).length === 1) {
+      setSelectedAssignment(null);
+      setSelectedCollectiveSession(null);
+      return;
+    }
     const res = await fetch("/api/assignments", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

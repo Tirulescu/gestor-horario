@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
 import { eq, and } from "drizzle-orm";
 import { apiError, safeJson, validateDay, validateHourRange } from "@/lib/validate";
+import { validateAssignmentSlot } from "@/lib/scheduleConflicts";
 import {
   requireTeacher,
   assertOwnTeacher,
@@ -55,7 +56,6 @@ export async function POST(req: NextRequest) {
   const dayOfWeek = Number(body.dayOfWeek);
   const startHour = Number(body.startHour);
   const endHour = Number(body.endHour);
-  const origin = (body.origin === "auto" ? "auto" : "manual") as "manual" | "auto";
 
   const deniedTeacher = assertOwnTeacher(auth.teacher, teacherId);
   if (deniedTeacher) return deniedTeacher;
@@ -75,8 +75,17 @@ export async function POST(req: NextRequest) {
   if (!subject) return apiError("Asignatura no encontrada", 404);
   if (subject.teacherId !== teacherId) return apiError("La asignatura no pertenece al profesor", 400);
 
+  const conflict = await validateAssignmentSlot({
+    teacherId,
+    studentIds: [studentId],
+    dayOfWeek,
+    startHour,
+    endHour,
+  });
+  if (conflict) return apiError(conflict);
+
   const [created] = await db.insert(schema.assignments)
-    .values({ teacherId, subjectId, studentId, dayOfWeek, startHour, endHour, origin })
+    .values({ teacherId, subjectId, studentId, dayOfWeek, startHour, endHour, origin: "manual" })
     .returning();
   return Response.json(created, { status: 201 });
 }
@@ -129,6 +138,24 @@ export async function PATCH(req: NextRequest) {
   if (endHour <= startHour) return apiError("La hora de fin debe ser posterior a la de inicio");
 
   if (row.collectiveSessionId) {
+    const peers = await db.query.assignments.findMany({
+      where: and(
+        eq(schema.assignments.teacherId, row.teacherId),
+        eq(schema.assignments.collectiveSessionId, row.collectiveSessionId),
+      ),
+      columns: { id: true, studentId: true },
+    });
+    const conflict = await validateAssignmentSlot({
+      teacherId: row.teacherId,
+      studentIds: peers.map((p) => p.studentId),
+      dayOfWeek,
+      startHour,
+      endHour,
+      excludeAssignmentIds: peers.map((p) => p.id),
+      excludeCollectiveSessionId: row.collectiveSessionId,
+    });
+    if (conflict) return apiError(conflict);
+
     const updated = await db
       .update(schema.assignments)
       .set({ dayOfWeek, startHour, endHour })
@@ -141,6 +168,16 @@ export async function PATCH(req: NextRequest) {
       .returning();
     return Response.json(updated[0] ?? row);
   }
+
+  const conflict = await validateAssignmentSlot({
+    teacherId: row.teacherId,
+    studentIds: [row.studentId],
+    dayOfWeek,
+    startHour,
+    endHour,
+    excludeAssignmentIds: [id],
+  });
+  if (conflict) return apiError(conflict);
 
   const [updated] = await db.update(schema.assignments).set({ dayOfWeek, startHour, endHour }).where(eq(schema.assignments.id, id)).returning();
   return Response.json(updated);

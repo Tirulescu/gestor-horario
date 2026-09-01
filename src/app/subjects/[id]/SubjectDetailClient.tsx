@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Plus, Trash2, Save, X, BookOpen, GraduationCap, ClipboardList,
-  Briefcase, Pencil, ArrowUp, ArrowDown, Sparkles,
+  Pencil, ArrowUp, ArrowDown, Sparkles,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -23,9 +23,7 @@ import { Card } from "@/components/ui/card";
 import { AnimatePresence, Reorder, useDragControls } from "motion/react";
 import { DragHandle } from "@/components/DragHandle";
 import { useToast } from "@/components/Toast";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { HeaderActionsSkeleton, TableCardSkeleton } from "@/components/skeletons";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
 import { DAYS } from "@/lib/validate";
 import { fmtRange, hourOptions, fmtDurationMin } from "@/lib/hours";
@@ -265,11 +263,18 @@ export default function SubjectDetailClient({ id }: { id: number }) {
 
   async function submitEditMember() {
     if (!editMember) return;
-    const patch: Record<string, unknown> = {
-      priority: Number(editPriority),
-      slotsRequired: Number(editSlots),
-    };
-    patch.durationMin = editDuration.trim() === "" ? null : Number(editDuration);
+    const durationMin = editDuration.trim() === "" ? null : Number(editDuration);
+    const priority = Number(editPriority);
+    const slotsRequired = Number(editSlots);
+    if (
+      priority === editMember.priority &&
+      slotsRequired === editMember.slotsRequired &&
+      durationMin === editMember.durationMin
+    ) {
+      setEditMember(null);
+      return;
+    }
+    const patch: Record<string, unknown> = { priority, slotsRequired, durationMin };
     const res = await fetch("/api/subject_students", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -459,12 +464,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
-            {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-8 w-56 max-w-full" />
-                <Skeleton className="h-4 w-20" />
-              </div>
-            ) : subject ? (
+            {loading ? null : subject ? (
               <>
                 <h1 className="section-title flex items-center gap-2 flex-wrap">
                   <BookOpen className="text-blue-600" /> {subject.name}
@@ -479,11 +479,9 @@ export default function SubjectDetailClient({ id }: { id: number }) {
               <p className="text-gray-500 text-sm">Asignatura no encontrada</p>
             )}
           </div>
-          {loading ? (
-            <HeaderActionsSkeleton />
-          ) : (
+          {!loading && (
             <div className="flex flex-wrap gap-2 items-center">
-              {subject && !subject.scheduleFixed && !subject.teacher?.scheduleFixed && (
+              {subject && !subject.scheduleFixed && (
                 <Button
                   size="sm"
                   disabled={busy}
@@ -501,11 +499,6 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                   disabled={busy || !subject}
                 />
               </div>
-              {subject && (
-                <Button asChild variant="outline" size="sm">
-                  <Link href="/dashboard"><Briefcase /> {subject.teacher?.name ?? "Mi panel"}</Link>
-                </Button>
-              )}
               <Button asChild size="sm">
                 <Link href="/requests"><ClipboardList /> <span className="hidden sm:inline">Solicitudes de horario</span><span className="sm:hidden">Solicitudes</span></Link>
               </Button>
@@ -514,12 +507,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
         </div>
       </div>
 
-      {loading ? (
-        <>
-          <TableCardSkeleton rows={3} />
-          <TableCardSkeleton rows={3} />
-        </>
-      ) : !subject ? null : (<>
+      {loading || !subject ? null : (<>
       <Card className="p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold flex items-center gap-2"><GraduationCap size={18} className="text-blue-600" /> Alumnos inscritos</h2>

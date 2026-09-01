@@ -1,7 +1,37 @@
+# dependencies
 node_modules
+
+# next.js
 .next
+out
+
+# env / secrets
 .env
-.env.local
+.env.*
+!.env.example
+
+# lockfiles (pnpm es el gestor del proyecto)
+package-lock.json
+yarn.lock
+
+# typescript
+*.tsbuildinfo
+
+# drizzle local cache
 drizzle
+
+# logs
 *.log
+npm-debug.log*
+pnpm-debug.log*
+
+# os
 .DS_Store
+Thumbs.db
+
+# ide
+.idea
+.vscode
+
+# vercel
+.vercel

@@ -1,6 +1,15 @@
 /** Franja horaria semanal: day 0=Lun … 6=Dom, start/end en horas decimales. */
 export type TimeRange = { day: number; start: number; end: number };
 
+export function rangesEqual(a: TimeRange[], b: TimeRange[]): boolean {
+  if (a.length !== b.length) return false;
+  const norm = (ranges: TimeRange[]) =>
+    [...ranges].sort((x, y) => x.day - y.day || x.start - y.start || x.end - y.end);
+  const sa = norm(a);
+  const sb = norm(b);
+  return sa.every((r, i) => r.day === sb[i].day && r.start === sb[i].start && r.end === sb[i].end);
+}
+
 export function normalizeRanges(raw: unknown): TimeRange[] {
   if (!Array.isArray(raw)) return [];
   return raw

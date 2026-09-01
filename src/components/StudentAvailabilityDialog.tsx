@@ -14,7 +14,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import WeekGrid, { type WeekBlock } from "@/components/WeekGrid";
 import { DAYS } from "@/lib/validate";
 import { hourOptions, fmtDayRange } from "@/lib/hours";
-import { rangesToZones, unavailableOutsideAvailable, type TimeRange } from "@/lib/studentAvailability";
+import { rangesEqual, rangesToZones, unavailableOutsideAvailable, type TimeRange } from "@/lib/studentAvailability";
 
 const COLORS = ["#2563eb", "#1d4ed8", "#0891b2", "#4f46e5", "#0284c7", "#7c3aed", "#0e7490", "#4338ca"];
 
@@ -42,6 +42,7 @@ export default function StudentAvailabilityDialog({
   saving = false,
 }: StudentAvailabilityDialogProps) {
   const [ranges, setRanges] = useState<TimeRange[]>([]);
+  const [initialRanges, setInitialRanges] = useState<TimeRange[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [addDay, setAddDay] = useState("1");
   const [addStart, setAddStart] = useState("16");
@@ -51,7 +52,9 @@ export default function StudentAvailabilityDialog({
 
   useEffect(() => {
     if (open && student) {
-      setRanges([...(student.availableRanges ?? [])]);
+      const base = [...(student.availableRanges ?? [])];
+      setRanges(base);
+      setInitialRanges(base);
     }
   }, [open, student]);
 
@@ -122,8 +125,14 @@ export default function StudentAvailabilityDialog({
     setConfirmRemove(null);
   }
 
+  const dirty = !rangesEqual(ranges, initialRanges);
+
   async function persistAndClose() {
     if (closing || saving) return;
+    if (!dirty) {
+      onOpenChange(false);
+      return;
+    }
     setClosing(true);
     try {
       await onSave(ranges);
@@ -151,7 +160,7 @@ export default function StudentAvailabilityDialog({
               Disponibilidad de {student?.name ?? "alumno"}
             </DialogTitle>
             <DialogDescription>
-              Franjas disponibles, bloqueos y clases ya asignadas (manuales o auto-agendadas). Al cerrar se guarda automáticamente.
+              Franjas disponibles, bloqueos y clases ya asignadas (manuales o auto-agendadas). Al cerrar se guardan solo los cambios.
             </DialogDescription>
           </DialogHeader>
 
@@ -266,7 +275,7 @@ export default function StudentAvailabilityDialog({
 
           <DialogFooter>
             <Button onClick={persistAndClose} disabled={saving || closing}>
-              <Save size={14} /> {saving || closing ? "Guardando…" : "Guardar y cerrar"}
+              <Save size={14} /> {saving || closing ? "Guardando…" : dirty ? "Guardar y cerrar" : "Cerrar"}
             </Button>
           </DialogFooter>
         </DialogContent>

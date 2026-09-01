@@ -1,4 +1,4 @@
-# Agenda Inteligente de Tutorías
+# Gestor de horario
 
 Web app (Next.js 15 + App Router + TypeScript) para agendar clases/tutorías automáticamente, con algoritmo de **auto-agendar** greedy.
 

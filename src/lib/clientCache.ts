@@ -2,8 +2,8 @@
 
 // Cache en memoria + localStorage (persistente en el dispositivo): las paginas
 // pintan al instante desde cache y SOLO refetchean tras una mutacion.
-const KEY = "__agendaCache";
-const MUT_KEY = "__agendaMut";
+const KEY = "__gestorHorarioCache";
+const MUT_KEY = "__gestorHorarioMut";
 
 type CacheShape = Record<string, unknown>;
 
@@ -110,9 +110,9 @@ export const WARM_ENDPOINTS: [string, string][] = [
 
 export function prefetchAll() {
   if (typeof window === "undefined") return;
-  const w = window as unknown as { __agendaWarm?: boolean };
-  if (w.__agendaWarm) return;
-  w.__agendaWarm = true;
+  const w = window as unknown as { __gestorHorarioWarm?: boolean };
+  if (w.__gestorHorarioWarm) return;
+  w.__gestorHorarioWarm = true;
   for (const [key, url] of WARM_ENDPOINTS) {
     fetch(url)
       .then((r) => r.json())

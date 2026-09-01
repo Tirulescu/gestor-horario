@@ -7,7 +7,7 @@ import {
 } from "@/lib/collectiveSchedule";
 import { endHourFromDuration, slotStartsForDuration } from "@/lib/hours";
 import { db, schema } from "@/db";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 
 export interface AutoScheduleAssigned {
   studentId: number;
@@ -441,16 +441,40 @@ export async function autoScheduleByTeacher(
     }
   }
 
+  const collectiveSubjectIds = new Set<number>();
+  const individualPairs = new Set<string>();
+  for (const p of plannedInserts) {
+    if (p.collectiveSessionId) {
+      collectiveSubjectIds.add(p.subjectId);
+    } else {
+      individualPairs.add(`${p.subjectId}:${p.studentId}`);
+    }
+  }
+
   await db.transaction(async (tx) => {
-    await tx
-      .delete(schema.assignments)
-      .where(
+    for (const subjectId of collectiveSubjectIds) {
+      await tx.delete(schema.assignments).where(
         and(
           eq(schema.assignments.teacherId, teacherId),
           eq(schema.assignments.origin, "auto"),
-          inArray(schema.assignments.subjectId, [...targetSubjectIds]),
+          eq(schema.assignments.subjectId, subjectId),
         ),
       );
+    }
+
+    for (const key of individualPairs) {
+      const [subjectId, studentId] = key.split(":").map(Number);
+      await tx.delete(schema.assignments).where(
+        and(
+          eq(schema.assignments.teacherId, teacherId),
+          eq(schema.assignments.origin, "auto"),
+          eq(schema.assignments.subjectId, subjectId),
+          eq(schema.assignments.studentId, studentId),
+          isNull(schema.assignments.collectiveSessionId),
+        ),
+      );
+    }
+
     if (plannedInserts.length > 0) {
       await tx.insert(schema.assignments).values(plannedInserts);
     }

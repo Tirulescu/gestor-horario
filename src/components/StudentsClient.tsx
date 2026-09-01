@@ -42,6 +42,7 @@ export default function StudentsClient() {
   const [fGrade, setFGrade] = useState("");
   const [fEmail, setFEmail] = useState("");
   const [selSubjects, setSelSubjects] = useState<Set<number>>(new Set());
+  const [initialSubjects, setInitialSubjects] = useState<Set<number>>(new Set());
   const [slotsPer, setSlotsPer] = useState("3");
 
   // dialog bloquear (unificado)
@@ -91,6 +92,7 @@ export default function StudentsClient() {
     setEditing(null);
     setFName(""); setFGrade(""); setFEmail("");
     setSelSubjects(new Set());
+    setInitialSubjects(new Set());
     setSlotsPer("3");
     setEditOpen(true);
   }
@@ -99,9 +101,17 @@ export default function StudentsClient() {
     setEditing(s);
     setFName(s.name); setFGrade(s.grade ?? ""); setFEmail(s.email ?? "");
     const rows = await fetch(`/api/subject_students?studentId=${s.id}`).then((r) => r.json()) as SSRow[];
-    setSelSubjects(new Set(rows.map((r) => r.subjectId)));
+    const subs = new Set(rows.map((r) => r.subjectId));
+    setSelSubjects(subs);
+    setInitialSubjects(subs);
     setSlotsPer("3");
     setEditOpen(true);
+  }
+
+  function subjectsEqual(a: Set<number>, b: Set<number>) {
+    if (a.size !== b.size) return false;
+    for (const id of a) if (!b.has(id)) return false;
+    return true;
   }
 
   function toggleSub(id: number) {
@@ -164,6 +174,16 @@ export default function StudentsClient() {
 
   async function saveStudent() {
     if (!fName.trim()) return toast("error", "Falta el nombre");
+    if (
+      editing &&
+      fName.trim() === editing.name &&
+      fGrade.trim() === (editing.grade ?? "") &&
+      fEmail.trim() === (editing.email ?? "") &&
+      subjectsEqual(selSubjects, initialSubjects)
+    ) {
+      setEditOpen(false);
+      return;
+    }
     setSaving(true);
     const payload: Record<string, unknown> = { name: fName.trim(), grade: fGrade.trim(), email: fEmail.trim() };
     if (editing) payload.id = editing.id;
@@ -183,13 +203,21 @@ export default function StudentsClient() {
       const row = rows.find((r) => r.subjectId === sub.id);
       const want = selSubjects.has(sub.id);
       if (want && !row) {
-        await fetch("/api/subject_students", {
+        const linkRes = await fetch("/api/subject_students", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ subjectId: sub.id, studentId: saved.id, slotsRequired: Number(slotsPer) || 1 }),
         });
+        if (!linkRes.ok) {
+          setSaving(false);
+          return toast("error", (await linkRes.json().catch(() => ({}))).error || `No se pudo añadir a ${sub.name}`);
+        }
       } else if (!want && row) {
-        await fetch(`/api/subject_students?id=${row.id}`, { method: "DELETE" });
+        const delRes = await fetch(`/api/subject_students?id=${row.id}`, { method: "DELETE" });
+        if (!delRes.ok) {
+          setSaving(false);
+          return toast("error", (await delRes.json().catch(() => ({}))).error || `No se pudo quitar de ${sub.name}`);
+        }
       }
     }
     setSaving(false);

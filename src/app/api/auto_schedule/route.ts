@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { autoScheduleByTeacher } from "@/lib/autoSchedule";
+import { withTeacherScheduleLock } from "@/lib/autoScheduleLock";
 import { apiError } from "@/lib/validate";
 import { requireTeacher, assertOwnTeacher, assertSubjectOwned } from "@/lib/auth/requireTeacher";
 
@@ -29,7 +30,9 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await autoScheduleByTeacher(teacherId, { subjectIds });
+    const result = await withTeacherScheduleLock(teacherId, () =>
+      autoScheduleByTeacher(teacherId, { subjectIds }),
+    );
     return Response.json(result);
   } catch (e) {
     return apiError((e as Error).message, 500);

@@ -96,6 +96,18 @@ function SubjectsPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return toast("error", "Falta el nombre");
+    if (editingId) {
+      const original = subjects?.find((s) => s.id === editingId);
+      if (
+        original &&
+        name === original.name &&
+        Number(defaultDurationMin) === original.defaultDurationMin &&
+        isCollective === Boolean(original.isCollective)
+      ) {
+        closeForm();
+        return;
+      }
+    }
     setLoading(true);
     const payload = {
       name,

@@ -6,10 +6,8 @@ import {
   requireTeacher,
   assertSubjectOwned,
   assertStudentAccessible,
-  assertStudentLinkable,
   assertSubjectStudentOwned,
   getSubjectIdsForTeacher,
-  linkStudentToTeacher,
 } from "@/lib/auth/requireTeacher";
 
 export async function GET(req: NextRequest) {
@@ -56,9 +54,11 @@ export async function POST(req: NextRequest) {
   const subjectDenied = await assertSubjectOwned(subjectId, auth.teacher.id);
   if (subjectDenied) return subjectDenied;
 
-  const linkDenied = await assertStudentLinkable(studentId, auth.teacher.id);
-  if (linkDenied) return linkDenied;
-  await linkStudentToTeacher(auth.teacher.id, studentId);
+  const studentDenied = await assertStudentAccessible(studentId, auth.teacher.id);
+  if (studentDenied) return studentDenied;
+
+  const student = await db.query.students.findFirst({ where: eq(schema.students.id, studentId) });
+  if (!student) return apiError("Alumno no encontrado", 404);
 
   const exists = await db.query.subjectStudents.findFirst({
     where: and(eq(schema.subjectStudents.subjectId, subjectId), eq(schema.subjectStudents.studentId, studentId)),

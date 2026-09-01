@@ -93,6 +93,13 @@ export default function CrudList({ endpoint, listEndpoint, title, fields, column
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (editing) {
+      const unchanged = fields.every((f) => form[f.name] === String(editing[f.name] ?? ""));
+      if (unchanged) {
+        closeForm();
+        return;
+      }
+    }
     setLoading(true);
     const payload: Record<string, unknown> = {};
     for (const f of fields) {

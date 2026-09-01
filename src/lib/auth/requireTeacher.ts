@@ -131,6 +131,9 @@ export async function assertStudentLinkable(studentId: number, teacherId: number
   });
   if (enrollments.some((e) => e.subject && e.subject.teacherId !== teacherId)) return forbid();
 
+  // Huérfanos (sin vínculo ni inscripciones) solo se reclaman al crearlos vía POST /api/students.
+  if (links.length === 0 && enrollments.length === 0) return forbid();
+
   return null;
 }
 

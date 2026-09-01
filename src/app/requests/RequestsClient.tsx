@@ -549,6 +549,10 @@ export default function RequestsClient() {
     if (row && day !== row.dayOfWeek) body.dayOfWeek = day;
     if (row && start !== row.startHour) body.startHour = start;
     if (row && end !== row.endHour) body.endHour = end;
+    if (Object.keys(body).length === 1) {
+      setEditOpen(false);
+      return;
+    }
     const res = await fetch("/api/slot_requests", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
