@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Plus, Trash2, Save, X, BookOpen, GraduationCap, ClipboardList,
@@ -27,7 +27,8 @@ import { Switch } from "@/components/ui/switch";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
 import { fmtDurationMin, collectSubjectDurationOptions } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
-import { invalidate, invalidateMany, put } from "@/lib/clientCache";
+import { invalidate, invalidateMany, put, warmData } from "@/lib/clientCache";
+import { SubjectDetailSkeleton } from "@/components/skeletons";
 import { COPY } from "@/lib/copy";
 
 interface Student { id: number; name: string; grade?: string | null; }
@@ -109,14 +110,45 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [editDuration, setEditDuration] = useState("");
   const [editSlots, setEditSlots] = useState("1");
 
+  const gradeKey = `/api/subject_grade_durations?subjectId=${id}`;
+
+  function hydrateFromCache(): boolean {
+    const allSubjects = warmData<Subject[]>("/api/subjects");
+    const ssAll = warmData<SubjectStudent[]>("/api/subject_students");
+    const st = warmData<Student[]>("/api/students");
+    const srAll = warmData<SlotRequest[]>("/api/slot_requests");
+    if (!allSubjects || !ssAll || !st || !srAll) return false;
+    const s = allSubjects.find((x) => x.id === id) ?? null;
+    if (!s) return false;
+    setSubject(s);
+    setMembers(ssAll.filter((x) => x.subjectId === id));
+    setAllStudents(st);
+    setSlotRequests(srAll.filter((x) => x.subjectId === id));
+    setGradeDurations(warmData<GradeDuration[]>(gradeKey) ?? []);
+    const teachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+    if (teachers) setTeacherScheduleFixed(Boolean(teachers[0]?.scheduleFixed));
+    return true;
+  }
+
   async function load() {
+    if (hydrateFromCache()) {
+      setLoading(false);
+      if (warmData<GradeDuration[]>(gradeKey) === null) {
+        try {
+          const gd = await fetch(gradeKey).then((r) => r.json()) as GradeDuration[];
+          setGradeDurations(gd);
+          put(gradeKey, gd);
+        } catch { /* ignore */ }
+      }
+      return;
+    }
     try {
       const [allSubjects, ssAll, st, srAll, gd, teachers] = await Promise.all([
         fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
         fetch("/api/subject_students").then((r) => r.json()) as Promise<SubjectStudent[]>,
         fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
         fetch("/api/slot_requests").then((r) => r.json()) as Promise<SlotRequest[]>,
-        fetch(`/api/subject_grade_durations?subjectId=${id}`).then((r) => r.json()) as Promise<GradeDuration[]>,
+        fetch(gradeKey).then((r) => r.json()) as Promise<GradeDuration[]>,
         fetch("/api/teachers").then((r) => r.json()) as Promise<{ scheduleFixed?: boolean }[]>,
       ]);
       const s = allSubjects.find((x) => x.id === id) ?? null;
@@ -132,11 +164,16 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       put("/api/subject_students", ssAll);
       put("/api/students", st);
       put("/api/slot_requests", srAll);
+      put(gradeKey, gd);
       put("/api/teachers", teachers);
     } finally {
       setLoading(false);
     }
   }
+
+  useLayoutEffect(() => {
+    if (hydrateFromCache()) setLoading(false);
+  }, [id]);
 
   useEffect(() => { load(); }, [id]);
 
@@ -275,7 +312,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
         toast("success", "Regla de curso eliminada");
       }
     }
-    invalidateMany(["/api/subject_students", "/api/subjects"]);
+    invalidateMany(["/api/subject_students", "/api/subjects", gradeKey]);
     await load();
   }
 
@@ -333,7 +370,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     const data = await res.json();
     toast("success", `Curso añadido: ${data.enrolled} alumno(s) inscrito(s)${data.skipped ? `, ${data.skipped} ya estaban` : ""}`);
     setGradeOpen(false);
-    invalidateMany(["/api/subject_students", "/api/subject_grade_durations"]);
+    invalidateMany(["/api/subject_students", gradeKey]);
     await load();
   }
 
@@ -341,7 +378,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     setConfirmTarget({
       kind: "gradeRule",
       id: ruleId,
-      label: `¿Eliminar la regla del curso ${grade}? Los alumnos inscritos no se quitarán automáticamente.`,
+      label: `¿Eliminar la regla del curso ${grade}?`,
     });
   }
 
@@ -369,12 +406,31 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       body: JSON.stringify({ id, scheduleFixed: fixed }),
     });
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    setSubject((s) => (s ? { ...s, scheduleFixed: fixed } : s));
+    setSubject((s) => {
+      if (!s) return s;
+      const next = { ...s, scheduleFixed: fixed };
+      const cached = warmData<Subject[]>("/api/subjects");
+      if (cached) {
+        put(
+          "/api/subjects",
+          cached.map((row) => (row.id === id ? { ...row, scheduleFixed: fixed } : row)),
+        );
+      }
+      return next;
+    });
     toast("success", fixed ? "Horario de esta asignatura fijado" : "Horario desbloqueado");
   }
 
+  if (loading) {
+    return (
+      <div className="page-stack">
+        <SubjectDetailSkeleton />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <AutoScheduleResultDialog result={autoResult} onClose={() => setAutoResult(null)} />
       <div className="space-y-3">
         <Button asChild variant="outline">
@@ -382,7 +438,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
-            {loading ? null : subject ? (
+            {subject ? (
               <>
                 <h1 className="section-title flex items-center gap-2 flex-wrap">
                   <BookOpen className="text-blue-600" /> {subject.name}
@@ -402,43 +458,39 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                       />
                     </>
                   )}
-                  {subject.isCollective && " · compartida por todos los alumnos inscritos"}
+                  {subject.isCollective && " · colectiva"}
                 </p>
               </>
             ) : (
               <p className="text-gray-500 text-sm">Asignatura no encontrada</p>
             )}
           </div>
-          {!loading && (
-            <div className="flex flex-wrap gap-2 items-center">
-              {!teacherScheduleFixed && subject && !subject.scheduleFixed && (
-                <Button
-                  disabled={busy}
-                  onClick={autoScheduleSubject}
-                >
-                  <Sparkles size={16} /> Auto-agendar
-                </Button>
-              )}
-              {!teacherScheduleFixed && (
-                <div className="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-1.5">
-                  <Label htmlFor="subj-fixed" className="text-xs text-gray-600">Fijar horario</Label>
-                  <Switch
-                    id="subj-fixed"
-                    checked={Boolean(subject?.scheduleFixed)}
-                    onCheckedChange={toggleScheduleFixed}
-                    disabled={busy || !subject}
-                  />
-                </div>
-              )}
-              <Button asChild variant="outline">
-                <Link href="/requests"><ClipboardList size={16} /> <span className="hidden sm:inline">Solicitudes</span><span className="sm:hidden">Solicitudes</span></Link>
+          <div className="flex flex-wrap gap-2 items-center">
+            {!teacherScheduleFixed && subject && !subject.scheduleFixed && (
+              <Button disabled={busy} onClick={autoScheduleSubject}>
+                <Sparkles size={16} /> Auto-agendar
               </Button>
+            )}
+            <div className="inline-flex items-center gap-2 h-11 px-4 rounded-[0.6rem] border border-gray-200 bg-white">
+              <Label htmlFor="subj-fixed" className="mb-0 cursor-pointer text-sm font-medium text-gray-800">
+                Fijar horario
+              </Label>
+              <Switch
+                id="subj-fixed"
+                checked={teacherScheduleFixed || Boolean(subject?.scheduleFixed)}
+                onCheckedChange={toggleScheduleFixed}
+                disabled={busy || !subject || teacherScheduleFixed}
+                title={teacherScheduleFixed ? "El horario está fijado en tu perfil" : undefined}
+              />
             </div>
-          )}
+            <Button asChild variant="outline">
+              <Link href="/requests"><ClipboardList size={16} /> Solicitudes</Link>
+            </Button>
+          </div>
         </div>
       </div>
 
-      {loading || !subject ? null : (<>
+      {!subject ? null : (<>
       <Card className="p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold flex items-center gap-2"><GraduationCap size={18} className="text-blue-600" /> Alumnos inscritos</h2>
@@ -575,9 +627,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Añadir curso a la asignatura</DialogTitle>
-            <DialogDescription>
-              Inscribe a todos los alumnos del curso con la duración indicada. La regla se guarda para futuros alumnos del mismo curso.
-            </DialogDescription>
+            <DialogDescription>Inscribe el curso con una duración.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>

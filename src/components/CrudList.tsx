@@ -138,7 +138,7 @@ export default function CrudList({ endpoint, listEndpoint, title, fields, column
   const itemLabel = title.toLowerCase().slice(0, -1);
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <div className="flex items-center justify-between gap-3">
         <h1 className="section-title">{title}</h1>
         <Button onClick={openNew}>
@@ -233,7 +233,7 @@ export default function CrudList({ endpoint, listEndpoint, title, fields, column
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar borrado</AlertDialogTitle>
-            <AlertDialogDescription>¿Seguro que quieres borrar este registro? Esta acción es en cascada.</AlertDialogDescription>
+            <AlertDialogDescription>¿Borrar este registro?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>

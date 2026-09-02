@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Save, X, GraduationCap, Calendar, CalendarClock, Mail } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, X, GraduationCap, Calendar, CalendarClock, CalendarDays, Mail } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import { TableCardSkeleton } from "@/components/skeletons";
@@ -19,6 +20,7 @@ import { warmData, put, invalidate, invalidateMany } from "@/lib/clientCache";
 import { fmtDayRange } from "@/lib/hours";
 import StudentScheduleViewDialog from "@/components/StudentScheduleViewDialog";
 import StudentScheduleManageDialog from "@/components/StudentScheduleManageDialog";
+import StudentsCalendarDialog from "@/components/StudentsCalendarDialog";
 import { firstAvailabilityBlockedConflict, type TimeRange } from "@/lib/studentAvailability";
 
 interface Subject { id: number; name: string; defaultDurationMin: number; isCollective?: boolean; }
@@ -32,6 +34,13 @@ interface Student {
 }
 interface SSRow { id: number; subjectId: number; studentId: number; durationMin?: number | null; }
 interface Availability { dayOfWeek: number; startHour: number; endHour: number; }
+interface TeacherBlock { dayOfWeek: number; startHour: number; endHour: number; }
+interface Assignment {
+  dayOfWeek: number;
+  startHour: number;
+  endHour: number;
+  studentId: number;
+}
 
 export default function StudentsClient() {
   const toast = useToast();
@@ -39,6 +48,8 @@ export default function StudentsClient() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [subjectLinks, setSubjectLinks] = useState<SSRow[]>([]);
   const [availabilities, setAvailabilities] = useState<Availability[]>([]);
+  const [teacherBlocks, setTeacherBlocks] = useState<TeacherBlock[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Student | null>(null);
@@ -53,6 +64,8 @@ export default function StudentsClient() {
 
   const [manageOpen, setManageOpen] = useState(false);
   const [manageStudentId, setManageStudentId] = useState<number | null>(null);
+  const [allBlocksOpen, setAllBlocksOpen] = useState(false);
+  const [calendarInitialView, setCalendarInitialView] = useState<"blocks" | "events">("blocks");
 
   const [confirmDel, setConfirmDel] = useState<Student | null>(null);
   const [saving, setSaving] = useState(false);
@@ -64,21 +77,29 @@ export default function StudentsClient() {
       setSubjects(warmData<Subject[]>("/api/subjects") ?? []);
       setSubjectLinks(warmData<SSRow[]>("/api/subject_students") ?? []);
       setAvailabilities(warmData<Availability[]>("/api/availabilities") ?? []);
+      setTeacherBlocks(warmData<TeacherBlock[]>("/api/teacher_blocks") ?? []);
+      setAssignments(warmData<Assignment[]>("/api/assignments") ?? []);
     }
-    const [st, su, ss, av] = await Promise.all([
+    const [st, su, ss, av, tb, asg] = await Promise.all([
       fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
       fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
       fetch("/api/subject_students").then((r) => r.json()) as Promise<SSRow[]>,
       fetch("/api/availabilities").then((r) => r.json()) as Promise<Availability[]>,
+      fetch("/api/teacher_blocks").then((r) => r.json()) as Promise<TeacherBlock[]>,
+      fetch("/api/assignments").then((r) => r.json()) as Promise<Assignment[]>,
     ]);
     setStudents(st);
     setSubjects(su);
     setSubjectLinks(ss);
     setAvailabilities(av);
+    setTeacherBlocks(tb);
+    setAssignments(asg);
     put("/api/students", st);
     put("/api/subjects", su);
     put("/api/subject_students", ss);
     put("/api/availabilities", av);
+    put("/api/teacher_blocks", tb);
+    put("/api/assignments", asg);
   }
   useEffect(() => { load(); }, []);
 
@@ -190,15 +211,22 @@ export default function StudentsClient() {
     await load();
   }
 
-  async function saveBlockBatch(targets: Student[], days: number[], start: number, end: number) {
+  async function saveBlockBatch(
+    targets: Student[],
+    days: number[],
+    start: number,
+    end: number,
+    title: string,
+  ) {
     setSaving(true);
     let touched = 0;
+    const blockTitle = title.trim() || undefined;
     for (const st of targets) {
       const cur = st.blockedRanges ?? [];
       const toAdd: TimeRange[] = [];
       for (const day of days) {
         const dup = cur.some((b) => b.day === day && end > b.start && start < b.end);
-        if (!dup) toAdd.push({ day, start, end });
+        if (!dup) toAdd.push({ day, start, end, ...(blockTitle ? { title: blockTitle } : {}) });
       }
       if (toAdd.length === 0) continue;
       const ok = await updateStudentRanges(st, { blockedRanges: [...cur, ...toAdd] });
@@ -342,13 +370,25 @@ export default function StudentsClient() {
     : null;
 
   return (
-    <div className="space-y-4">
+    <div className="page-stack">
       <PageHeader
         icon={GraduationCap}
         title="Alumnos"
-        description="Datos de alumnos, horarios y restricciones."
+        description="Alumnos, horarios y bloqueos."
         actions={
           <>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if ((students ?? []).length === 0) return toast("error", "No hay alumnos todavía");
+                setCalendarInitialView("blocks");
+                setAllBlocksOpen(true);
+              }}
+            >
+              <CalendarDays size={16} />
+              <span className="sm:hidden">Calendario</span>
+              <span className="hidden sm:inline">Ver calendarios</span>
+            </Button>
             <Button variant="outline" onClick={() => openScheduleManage()}>
               <CalendarClock size={16} />
               <span className="sm:hidden">Horario</span>
@@ -430,7 +470,7 @@ export default function StudentsClient() {
                   ) : (
                     (s.blockedRanges ?? []).map((b, i) => (
                       <Badge key={i} variant="danger" className="font-normal whitespace-normal text-left leading-snug">
-                        {fmtDayRange(b.day, b.start, b.end)}
+                        {b.title?.trim() ? `${b.title.trim()} · ` : ""}{fmtDayRange(b.day, b.start, b.end)}
                       </Badge>
                     ))
                   )}
@@ -446,7 +486,7 @@ export default function StudentsClient() {
           <DialogHeader>
             <DialogTitle>{editing ? "Editar alumno" : "Nuevo alumno"}</DialogTitle>
             {!editing && (
-              <DialogDescription>Datos del alumno y en qué asignaturas entra.</DialogDescription>
+              <DialogDescription>Datos y asignaturas.</DialogDescription>
             )}
           </DialogHeader>
           <div className="space-y-3 overflow-y-auto" style={{ maxHeight: "60dvh" }}>
@@ -472,10 +512,15 @@ export default function StudentsClient() {
               ) : (
                 <div className="space-y-1.5 mt-1">
                   {subjects.map((sub) => (
-                    <label key={sub.id} className="flex items-center gap-2.5 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-sm cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-blue-600"
+                    <label
+                      key={sub.id}
+                      className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors ${
+                        selSubjects.has(sub.id)
+                          ? "bg-[#eff6ff] border-[var(--accent)]/40"
+                          : "bg-gray-50 border-gray-100"
+                      }`}
+                    >
+                      <Checkbox
                         checked={selSubjects.has(sub.id)}
                         onChange={() => toggleSub(sub.id)}
                       />
@@ -498,6 +543,7 @@ export default function StudentsClient() {
         onOpenChange={setViewOpen}
         student={viewStudentFresh}
         subjects={subjects}
+        teacherAvailabilities={availabilities}
       />
 
       <StudentScheduleManageDialog
@@ -508,6 +554,8 @@ export default function StudentsClient() {
         subjects={subjects}
         subjectLinks={subjectLinks}
         availabilities={availabilities}
+        teacherBlocks={teacherBlocks}
+        assignments={assignments}
         initialStudentId={manageStudentId}
         saving={saving}
         onSaveAvailability={saveAvailabilityBatch}
@@ -517,12 +565,20 @@ export default function StudentsClient() {
         onRemoveBlock={removeBlock}
       />
 
+      <StudentsCalendarDialog
+        open={allBlocksOpen}
+        onOpenChange={setAllBlocksOpen}
+        students={students ?? []}
+        subjects={subjects}
+        initialView={calendarInitialView}
+      />
+
       <AlertDialog open={confirmDel !== null} onOpenChange={(o) => { if (!o) setConfirmDel(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar borrado</AlertDialogTitle>
             <AlertDialogDescription>
-              ¿Borrar a <strong>{confirmDel?.name}</strong>? Se borran también sus solicitudes, inscripciones y clases.
+              ¿Borrar a <strong>{confirmDel?.name}</strong>?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -3,9 +3,8 @@
 import { useMemo } from "react";
 import { CheckCircle2, Sparkles, Users, XCircle, Clock, CalendarDays } from "lucide-react";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DAYS } from "@/lib/validate";
 import { fmtRange } from "@/lib/hours";
@@ -241,15 +240,15 @@ export default function AutoScheduleResultDialog({
             </DialogTitle>
             <DialogDescription>
               {placedCount > 0
-                ? `${placedCount} sesión${placedCount !== 1 ? "es" : ""} colocada${placedCount !== 1 ? "s" : ""} en tu horario.`
+                ? `${placedCount} colocada${placedCount !== 1 ? "s" : ""}.`
                 : failedCount > 0
-                  ? "No se pudo colocar ninguna clase en esta ejecución."
-                  : "No había clases pendientes de agendar."}
+                  ? "Ninguna clase colocada."
+                  : "Nada pendiente."}
             </DialogDescription>
           </DialogHeader>
         </div>
 
-        <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain px-5 pb-4">
+        <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain px-5 pb-5">
           <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
             <SummaryStat value={placedCount} label="Colocadas" tone="green" />
             <SummaryStat value={failedCount} label="Sin colocar" tone="red" />
@@ -328,12 +327,6 @@ export default function AutoScheduleResultDialog({
             </section>
           )}
         </div>
-
-        <DialogFooter className="mt-0 shrink-0 border-t border-gray-100 px-5 py-4">
-          <Button onClick={onClose} className="w-full sm:w-auto min-h-11">
-            <CheckCircle2 size={14} /> Entendido
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

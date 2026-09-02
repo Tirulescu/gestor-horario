@@ -1,7 +1,13 @@
-import { durationFitsInInterval, endHourFromDuration, slotMatchesDuration } from "./hours";
+import {
+  durationFitsInInterval,
+  endHourFromDuration,
+  SCHEDULE_DAY_END,
+  SCHEDULE_DAY_START,
+  slotMatchesDuration,
+} from "./hours";
 
 /** Franja horaria semanal: day 0=Lun … 6=Dom, start/end en horas decimales. */
-export type TimeRange = { day: number; start: number; end: number };
+export type TimeRange = { day: number; start: number; end: number; title?: string };
 
 export function normalizeRanges(raw: unknown): TimeRange[] {
   if (!Array.isArray(raw)) return [];
@@ -11,6 +17,30 @@ export function normalizeRanges(raw: unknown): TimeRange[] {
       start: Number(b.start),
       end: Number(b.end),
     }))
+    .filter(
+      (b) =>
+        Number.isFinite(b.day) &&
+        Number.isFinite(b.start) &&
+        Number.isFinite(b.end) &&
+        b.end > b.start &&
+        b.day >= 0 &&
+        b.day <= 6
+    );
+}
+
+/** Igual que normalizeRanges, pero conserva un título opcional (bloqueos). */
+export function normalizeBlockedRanges(raw: unknown): TimeRange[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((b: { day?: unknown; start?: unknown; end?: unknown; title?: unknown }) => {
+      const title = typeof b.title === "string" ? b.title.trim() : "";
+      return {
+        day: Number(b.day),
+        start: Number(b.start),
+        end: Number(b.end),
+        ...(title ? { title } : {}),
+      };
+    })
     .filter(
       (b) =>
         Number.isFinite(b.day) &&
@@ -58,6 +88,27 @@ function intersect(a: { start: number; end: number }, b: { start: number; end: n
   return end > start ? { start, end } : null;
 }
 
+/** Resta intervalos ocupados de una lista de franjas del mismo día. */
+export function subtractBlockedFromDayRanges(
+  ranges: { start: number; end: number }[],
+  blocked: { start: number; end: number }[],
+): { start: number; end: number }[] {
+  let out = ranges;
+  for (const b of blocked) {
+    const next: { start: number; end: number }[] = [];
+    for (const r of out) {
+      if (b.end <= r.start || b.start >= r.end) {
+        next.push(r);
+        continue;
+      }
+      if (b.start > r.start) next.push({ start: r.start, end: b.start });
+      if (b.end < r.end) next.push({ start: b.end, end: r.end });
+    }
+    out = next;
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
 /** Intersección profesor ∩ alumno, restando bloqueos del alumno. */
 export function getEffectiveRangesForDay(
   day: number,
@@ -83,20 +134,10 @@ export function getEffectiveRangesForDay(
     ranges = ix;
   }
 
-  for (const b of studentBlocked.filter((x) => x.day === day)) {
-    const next: { start: number; end: number }[] = [];
-    for (const r of ranges) {
-      if (b.end <= r.start || b.start >= r.end) {
-        next.push(r);
-        continue;
-      }
-      if (b.start > r.start) next.push({ start: r.start, end: b.start });
-      if (b.end < r.end) next.push({ start: b.end, end: r.end });
-    }
-    ranges = next;
-  }
-
-  return ranges.sort((a, b) => a.start - b.start);
+  return subtractBlockedFromDayRanges(
+    ranges,
+    studentBlocked.filter((x) => x.day === day).map((b) => ({ start: b.start, end: b.end })),
+  );
 }
 
 /** Intersección entre huecos libres del profesor y franjas disponibles del alumno. */
@@ -189,11 +230,11 @@ export function rangesToZones(ranges: TimeRange[]): Record<number, { start: numb
   return zones;
 }
 
-/** Sombrea fuera de las franjas disponibles del alumno (cuando hay disponibilidad definida). */
+/** Sombrea fuera de las franjas disponibles (cuando hay disponibilidad definida). */
 export function unavailableOutsideAvailable(
   available: TimeRange[],
-  lo = 8,
-  hi = 21
+  lo = SCHEDULE_DAY_START,
+  hi = SCHEDULE_DAY_END,
 ): Record<number, { start: number; end: number }[]> {
   if (available.length === 0) return {};
   const byDay = rangesToZones(available);
@@ -214,6 +255,13 @@ export function unavailableOutsideAvailable(
     if (gaps.length > 0) result[day] = gaps;
   }
   return result;
+}
+
+/** Convierte franjas del profesor ({ dayOfWeek, startHour, endHour }) a TimeRange. */
+export function teacherAvailsToRanges(
+  avails: { dayOfWeek: number; startHour: number; endHour: number }[],
+): TimeRange[] {
+  return avails.map((a) => ({ day: a.dayOfWeek, start: a.startHour, end: a.endHour }));
 }
 
 function intersectRangeLists(
@@ -275,16 +323,54 @@ export function getSlotHourSetsFromRanges(
   let endSet: Set<string>;
   if (durationMin != null && durationMin > 0 && selectedStart !== undefined && selectedStart !== "") {
     endSet = new Set([String(endHourFromDuration(Number(selectedStart), durationMin))]);
+  } else if (selectedStart !== undefined && selectedStart !== "") {
+    const s = Number(selectedStart);
+    const containing = ranges.find((r) => s >= r.start && s < r.end);
+    endSet = containing
+      ? allowedHourSet([containing], hoursEnd, "end", s)
+      : new Set<string>();
   } else {
-    endSet = allowedHourSet(
-      ranges,
-      hoursEnd,
-      "end",
-      selectedStart !== undefined && selectedStart !== "" ? Number(selectedStart) : undefined,
-    );
+    endSet = allowedHourSet(ranges, hoursEnd, "end");
   }
 
   return { startSet, endSet, ranges };
+}
+
+/** Huecos libres en un día restando bloqueos (ventana completa por defecto). */
+export function getFreeRangesExcludingBlocked(
+  day: number,
+  blocked: TimeRange[],
+  windowStart = 8,
+  windowEnd = 24,
+): { start: number; end: number }[] {
+  return getEffectiveRangesForDay(
+    day,
+    [{ dayOfWeek: day, startHour: windowStart, endHour: windowEnd }],
+    [],
+    blocked,
+  );
+}
+
+/** Horas válidas comunes a varios días, restando bloqueos. */
+export function getFreeHourSetsForDays(
+  days: number[],
+  blocked: TimeRange[],
+  hoursStart: { value: string; label: string }[],
+  hoursEnd: { value: string; label: string }[],
+  selectedStart?: string,
+): { startSet: Set<string>; endSet: Set<string> } {
+  if (days.length === 0) return { startSet: new Set(), endSet: new Set() };
+  const perDay = days.map((day) => {
+    const ranges = getFreeRangesExcludingBlocked(day, blocked);
+    return getSlotHourSetsFromRanges(ranges, hoursStart, hoursEnd, selectedStart);
+  });
+  let startSet = perDay[0].startSet;
+  let endSet = perDay[0].endSet;
+  for (let i = 1; i < perDay.length; i++) {
+    startSet = new Set([...startSet].filter((v) => perDay[i].startSet.has(v)));
+    endSet = new Set([...endSet].filter((v) => perDay[i].endSet.has(v)));
+  }
+  return { startSet, endSet };
 }
 
 /** Conjuntos de horas válidas para selects de solicitudes (profesor ∩ alumno − bloqueos). */

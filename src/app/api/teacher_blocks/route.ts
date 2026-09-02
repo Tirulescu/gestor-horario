@@ -34,10 +34,11 @@ export async function POST(req: NextRequest) {
   const dayOfWeek = Number(body.dayOfWeek);
   const startHour = Number(body.startHour);
   const endHour = Number(body.endHour);
-  const title = String(body.title ?? "").trim() || "Bloqueado";
+  const title = String(body.title ?? "").trim();
   const denied = assertOwnTeacher(auth.teacher, teacherId);
   if (denied) return denied;
   if (!teacherId) return apiError("teacherId requerido");
+  if (!title) return apiError("El motivo es obligatorio");
 
   const dErr = validateDay(dayOfWeek);
   if (dErr) return apiError(dErr);

@@ -32,20 +32,25 @@ export default function CalendarEventDetailDialog({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onOpenChange(false);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onOpenChange]);
 
   if (!mounted || !open) return null;
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[250] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[320] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      data-calendar-event-detail=""
+      style={{ pointerEvents: "auto" }}
     >
       <button
         type="button"

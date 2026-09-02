@@ -204,11 +204,11 @@ export default function DashboardClient() {
     startHour: b.startHour,
     endHour: b.endHour,
     title: b.title,
-    subtitle: "bloqueado",
+    subtitle: "evento",
     color: "#475569",
     detailTitle: b.title,
     details: [
-      { label: "Tipo", value: "Hora bloqueada" },
+      { label: "Tipo", value: "Evento" },
       { label: "Día", value: DAYS[b.dayOfWeek] },
       { label: "Horario", value: fmtRange(b.startHour, b.endHour) },
     ],
@@ -329,7 +329,7 @@ export default function DashboardClient() {
     }));
     const conflict = firstAvailabilityBlockedConflict(ranges, blocked);
     if (conflict) {
-      return toast("error", `La franja choca con un bloqueo existente`);
+      return toast("error", `La franja choca con un evento existente`);
     }
     setBusy(true);
     let saved = 0;
@@ -360,15 +360,18 @@ export default function DashboardClient() {
     setBusy(true);
     let saved = 0;
     for (const day of days) {
-      const dup = teacherBlocks.some(
+      const dupBlock = teacherBlocks.some(
         (b) => b.dayOfWeek === day && end > b.startHour && start < b.endHour
       );
-      if (dup) continue;
+      const dupAsg = assignments.some(
+        (a) => a.dayOfWeek === day && end > a.startHour && start < a.endHour
+      );
+      if (dupBlock || dupAsg) continue;
       const res = await fetch("/api/teacher_blocks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: title || "Bloqueado",
+          title,
           dayOfWeek: day,
           startHour: start,
           endHour: end,
@@ -381,8 +384,8 @@ export default function DashboardClient() {
       saved++;
     }
     setBusy(false);
-    if (saved === 0) return toast("error", "Esas horas ya estaban bloqueadas");
-    toast("success", saved === 1 ? "Hora bloqueada" : `${saved} bloqueos añadidos`);
+    if (saved === 0) return toast("error", "Ese horario ya tiene un evento o clase");
+    toast("success", saved === 1 ? "Evento añadido" : `${saved} eventos añadidos`);
     invalidate("/api/teacher_blocks");
     await load();
   }
@@ -398,7 +401,7 @@ export default function DashboardClient() {
   async function removeBlock(id: number) {
     const res = await fetch(`/api/teacher_blocks?id=${id}`, { method: "DELETE" });
     if (!res.ok) return toast("error", "No se pudo quitar");
-    toast("success", "Bloqueo quitado");
+    toast("success", "Evento quitado");
     invalidate("/api/teacher_blocks");
     await load();
   }
@@ -500,11 +503,11 @@ export default function DashboardClient() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="dashboard-stack">
       <PageHeader
         icon={Briefcase}
         title={loading ? <Skeleton className="inline-block h-7 w-40 align-middle" /> : (teacher?.name ?? "—")}
-        description="Tu horario semanal — clases, disponibilidad y reservas."
+        description="Clases, disponibilidad y eventos."
         actions={
           <>
             <Button variant="outline" onClick={() => setManageOpen(true)}>
@@ -668,6 +671,7 @@ export default function DashboardClient() {
         onOpenChange={setManageOpen}
         availabilities={availabilities}
         teacherBlocks={teacherBlocks}
+        assignments={assignments}
         saving={busy}
         onSaveAvailability={saveAvailabilityBatch}
         onSaveBlock={saveBlockBatch}
@@ -690,16 +694,15 @@ export default function DashboardClient() {
                 if (selectedCollectiveSession) {
                   return (
                     <>
-                      ¿Eliminar la sesión colectiva de <strong>{subjectName}</strong> el {slot}?
-                      Se quitarán <strong>{selectedCollectiveSession.length}</strong> alumno
-                      {selectedCollectiveSession.length !== 1 ? "s" : ""} de esta sesión.
+                      ¿Eliminar sesión de <strong>{subjectName}</strong> el {slot} ({selectedCollectiveSession.length} alumno
+                      {selectedCollectiveSession.length !== 1 ? "s" : ""})?
                     </>
                   );
                 }
                 const studentName = target.student?.name ?? `#${target.studentId}`;
                 return (
                   <>
-                    ¿Eliminar la clase de <strong>{subjectName}</strong> con <strong>{studentName}</strong> el {slot}?
+                    ¿Eliminar <strong>{subjectName}</strong> con <strong>{studentName}</strong> el {slot}?
                   </>
                 );
               })()}
@@ -715,9 +718,9 @@ export default function DashboardClient() {
       <AlertDialog open={confirmTb != null} onOpenChange={(o) => { if (!o) setConfirmTb(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Quitar bloqueo</AlertDialogTitle>
+            <AlertDialogTitle>Quitar evento</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmTb ? `¿Quitar el bloqueo "${confirmTb.title}" del ${DAYS[confirmTb.dayOfWeek]} ${fmtRange(confirmTb.startHour, confirmTb.endHour)}? Esas horas volverán a estar disponibles para clases.` : ""}
+              {confirmTb ? `¿Quitar el evento "${confirmTb.title}" del ${DAYS[confirmTb.dayOfWeek]} ${fmtRange(confirmTb.startHour, confirmTb.endHour)}?` : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

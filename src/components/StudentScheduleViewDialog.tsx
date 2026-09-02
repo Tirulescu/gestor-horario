@@ -3,13 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { Calendar } from "lucide-react";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import WeekGrid, { type WeekBlock } from "@/components/WeekGrid";
 import { fmtDayRange, fmtRange, fmtDurationMin, SCHEDULE_DAY_START, SCHEDULE_DAY_END } from "@/lib/hours";
 import { DAYS } from "@/lib/validate";
-import { rangesToZones, unavailableOutsideAvailable, type TimeRange } from "@/lib/studentAvailability";
+import {
+  rangesToZones,
+  teacherAvailsToRanges,
+  unavailableOutsideAvailable,
+  type TimeRange,
+} from "@/lib/studentAvailability";
 
 const COLORS = ["#2563eb", "#1d4ed8", "#0891b2", "#4f46e5", "#0284c7", "#7c3aed", "#0e7490", "#4338ca"];
 
@@ -18,6 +22,7 @@ interface Assignment {
   id: number; subjectId: number; dayOfWeek: number; startHour: number; endHour: number;
   origin: string; subject?: { id: number; name: string };
 }
+interface TeacherAvailability { dayOfWeek: number; startHour: number; endHour: number; }
 
 interface StudentScheduleViewDialogProps {
   open: boolean;
@@ -29,6 +34,8 @@ interface StudentScheduleViewDialogProps {
     blockedRanges?: TimeRange[];
   } | null;
   subjects?: Subject[];
+  /** Disponibilidad del profesor: las rayas del fondo marcan fuera de ella. */
+  teacherAvailabilities?: TeacherAvailability[];
 }
 
 export default function StudentScheduleViewDialog({
@@ -36,6 +43,7 @@ export default function StudentScheduleViewDialog({
   onOpenChange,
   student,
   subjects = [],
+  teacherAvailabilities = [],
 }: StudentScheduleViewDialogProps) {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
 
@@ -86,9 +94,17 @@ export default function StudentScheduleViewDialog({
     [assignments, subjects, subjectColor, student?.name],
   );
 
+  const teacherRanges = useMemo(
+    () => teacherAvailsToRanges(teacherAvailabilities),
+    [teacherAvailabilities],
+  );
+
   const legend = useMemo(() => {
-    const items: { label: string; color: string; dashed?: boolean }[] = [];
-    if (ranges.length > 0) items.push({ label: "Disponible", color: "#22c55e", dashed: true });
+    const items: { label: string; color: string; dashed?: boolean; striped?: boolean }[] = [];
+    if (teacherRanges.length > 0) {
+      items.push({ label: "Profesor no disponible", color: "#94a3b8", striped: true });
+    }
+    if (ranges.length > 0) items.push({ label: "Disponible (alumno)", color: "#22c55e", dashed: true });
     if (blocked.length > 0) items.push({ label: "Bloqueado", color: "#ef4444" });
     const scheduledIds = new Set(assignments.map((a) => a.subjectId));
     for (const sub of subjects) {
@@ -97,11 +113,14 @@ export default function StudentScheduleViewDialog({
       }
     }
     return items;
-  }, [ranges.length, blocked.length, assignments, subjects, subjectColor]);
+  }, [teacherRanges.length, ranges.length, blocked.length, assignments, subjects, subjectColor]);
 
   const availZones = useMemo(() => rangesToZones(ranges), [ranges]);
   const blockedZones = useMemo(() => rangesToZones(blocked), [blocked]);
-  const unavail = useMemo(() => unavailableOutsideAvailable(ranges), [ranges]);
+  const unavail = useMemo(
+    () => unavailableOutsideAvailable(teacherRanges, SCHEDULE_DAY_START, SCHEDULE_DAY_END),
+    [teacherRanges],
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -111,15 +130,12 @@ export default function StudentScheduleViewDialog({
             <Calendar size={18} className="text-blue-600" />
             Horario de {student?.name ?? "alumno"}
           </DialogTitle>
-          <DialogDescription>
-            Vista del calendario semanal: clases, disponibilidad y bloqueos. Para modificar franjas usa «Gestionar horario».
-          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <WeekGrid
             compact
-            hourHeight={56}
+            hourHeight={64}
             startH={SCHEDULE_DAY_START}
             endH={SCHEDULE_DAY_END}
             inDialog
@@ -153,7 +169,7 @@ export default function StudentScheduleViewDialog({
                   <div className="flex flex-wrap gap-1">
                     {blocked.map((r, i) => (
                       <span key={i} className="rounded-full bg-white/80 border border-red-200 px-2 py-0.5 text-red-800">
-                        {fmtDayRange(r.day, r.start, r.end)}
+                        {r.title?.trim() ? `${r.title.trim()} · ` : ""}{fmtDayRange(r.day, r.start, r.end)}
                       </span>
                     ))}
                   </div>
@@ -190,10 +206,6 @@ export default function StudentScheduleViewDialog({
             </p>
           )}
         </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cerrar</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

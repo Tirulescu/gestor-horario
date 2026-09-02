@@ -3,20 +3,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { Ban, CalendarClock, CalendarPlus, Plus, Save, X } from "lucide-react";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DAYS } from "@/lib/validate";
 import { fmtDayRange, fmtHour, hourOptions, endHourFromDuration, fmtDurationMin, resolveMemberDurationMin } from "@/lib/hours";
 import {
   getAssignmentEffectiveRanges,
+  getFreeHourSetsForDays,
   getSlotHourSetsFromRanges,
   slotOverlapsBlocked,
+  subtractBlockedFromDayRanges,
   type TimeRange,
 } from "@/lib/studentAvailability";
 
@@ -48,6 +52,13 @@ interface Availability {
   endHour: number;
 }
 
+interface OccupiedSlot {
+  dayOfWeek: number;
+  startHour: number;
+  endHour: number;
+  studentId?: number;
+}
+
 type TargetMode = "student" | "grade" | "multiple";
 type ActionType = "availability" | "block" | "event";
 
@@ -64,10 +75,14 @@ interface StudentScheduleManageDialogProps {
   subjects: SubjectOption[];
   subjectLinks: SubjectLink[];
   availabilities: Availability[];
+  /** Eventos/reservas del profesor (no solapables con clases). */
+  teacherBlocks?: OccupiedSlot[];
+  /** Clases ya asignadas (profesor y alumnos). */
+  assignments?: OccupiedSlot[];
   initialStudentId?: number | null;
   saving?: boolean;
   onSaveAvailability: (targets: Student[], ranges: TimeRange[]) => Promise<void>;
-  onSaveBlock: (targets: Student[], days: number[], start: number, end: number) => Promise<void>;
+  onSaveBlock: (targets: Student[], days: number[], start: number, end: number, title: string) => Promise<void>;
   onSaveEvent: (
     targets: Student[],
     subjectId: number,
@@ -99,6 +114,8 @@ export default function StudentScheduleManageDialog({
   subjects,
   subjectLinks,
   availabilities,
+  teacherBlocks = [],
+  assignments = [],
   initialStudentId = null,
   saving = false,
   onSaveAvailability,
@@ -116,6 +133,7 @@ export default function StudentScheduleManageDialog({
   const [days, setDays] = useState<Set<number>>(new Set([1]));
   const [start, setStart] = useState("16");
   const [end, setEnd] = useState("18");
+  const [blockTitle, setBlockTitle] = useState("");
   const [pendingAvail, setPendingAvail] = useState<TimeRange[]>([]);
   const [addErr, setAddErr] = useState("");
   const [confirmRemove, setConfirmRemove] = useState<ConfirmRemove>(null);
@@ -140,6 +158,7 @@ export default function StudentScheduleManageDialog({
     setDays(new Set([1]));
     setStart("16");
     setEnd("18");
+    setBlockTitle("");
     setPendingAvail([]);
     setAddErr("");
     setConfirmRemove(null);
@@ -193,12 +212,27 @@ export default function StudentScheduleManageDialog({
     if (action !== "event" || !eventSlotDuration || days.size === 0 || enrolledTargets.length === 0) {
       return { startSet: new Set<string>(), endSet: new Set<string>() };
     }
+    // Dentro de disponibilidad (profesor ∩ alumno) y sin solapar bloqueos/eventos.
     const slotStudents = enrolledTargets.map((st) => ({
       available: st.availableRanges ?? [],
-      blocked: st.blockedRanges ?? [],
+      blocked: [
+        ...(st.blockedRanges ?? []),
+        ...assignments
+          .filter((a) => a.studentId === st.id)
+          .map((a) => ({ day: a.dayOfWeek, start: a.startHour, end: a.endHour })),
+      ],
     }));
+    const teacherBusy = [
+      ...teacherBlocks.map((b) => ({ day: b.dayOfWeek, start: b.startHour, end: b.endHour })),
+      ...assignments.map((a) => ({ day: a.dayOfWeek, start: a.startHour, end: a.endHour })),
+    ];
+
     const daySets = [...days].map((day) => {
-      const ranges = getAssignmentEffectiveRanges(day, availabilities, slotStudents);
+      let ranges = getAssignmentEffectiveRanges(day, availabilities, slotStudents);
+      ranges = subtractBlockedFromDayRanges(
+        ranges,
+        teacherBusy.filter((b) => b.day === day).map((b) => ({ start: b.start, end: b.end })),
+      );
       return getSlotHourSetsFromRanges(ranges, HOURS_START, HOURS_END, start, eventSlotDuration).startSet;
     });
     const startSet = intersectSets(daySets);
@@ -206,7 +240,29 @@ export default function StudentScheduleManageDialog({
       ? new Set([String(endHourFromDuration(Number(start), eventSlotDuration))])
       : new Set<string>();
     return { startSet, endSet };
-  }, [action, eventSlotDuration, days, enrolledTargets, availabilities, start]);
+  }, [action, eventSlotDuration, days, enrolledTargets, availabilities, start, teacherBlocks, assignments]);
+
+  const manageHourSets = useMemo(() => {
+    if (action === "event") return { startSet: new Set<string>(), endSet: new Set<string>() };
+    // Bloqueos: pueden estar fuera de la disponibilidad; no solapar otros bloqueos.
+    if (action === "block") {
+      return getFreeHourSetsForDays(
+        [...days],
+        targets.flatMap((st) => st.blockedRanges ?? []),
+        HOURS_START,
+        HOURS_END,
+        start,
+      );
+    }
+    // Disponibilidad: solo huecos libres (sin bloqueos).
+    const blocked = [
+      ...targets.flatMap((st) => st.blockedRanges ?? []),
+      ...pendingAvail,
+    ];
+    return getFreeHourSetsForDays([...days], blocked, HOURS_START, HOURS_END, start);
+  }, [action, days, targets, pendingAvail, start]);
+
+  const hourSets = action === "event" ? eventHourSets : manageHourSets;
 
   const eventEndLabel = useMemo(() => {
     if (action !== "event" || start === "" || !selectedSubject) return "—";
@@ -230,11 +286,19 @@ export default function StudentScheduleManageDialog({
   }, [action, targetMode, studentId, grade, group, days, start, end, eventSubjectId]);
 
   useEffect(() => {
-    if (action !== "event") return;
-    if (eventHourSets.startSet.size > 0 && !eventHourSets.startSet.has(start)) {
-      setStart(Array.from(eventHourSets.startSet)[0]);
+    if (hourSets.startSet.size === 0) return;
+    if (!hourSets.startSet.has(start)) {
+      setStart(Array.from(hourSets.startSet)[0]);
     }
-  }, [action, eventHourSets.startSet, start, days, eventSubjectId]);
+  }, [hourSets.startSet, start, action, days, eventSubjectId, targets, pendingAvail]);
+
+  useEffect(() => {
+    if (action === "event") return;
+    if (hourSets.endSet.size === 0) return;
+    if (!hourSets.endSet.has(end)) {
+      setEnd(Array.from(hourSets.endSet)[0]);
+    }
+  }, [action, hourSets.endSet, end]);
 
   useEffect(() => {
     if (action === "event" && eventSubjects.length === 1 && !eventSubjectId) {
@@ -265,6 +329,12 @@ export default function StudentScheduleManageDialog({
       if (!eventSubjectId) return "Selecciona una asignatura";
       if (enrolledTargets.length === 0) return "Ningún alumno seleccionado está inscrito en esa asignatura";
       if (eventHourSets.startSet.size === 0) return "No hay horario disponible en común para ese día";
+    }
+    if (action === "availability" && days.size > 0 && manageHourSets.startSet.size === 0) {
+      return "No hay horas libres (sin bloqueos) para los días seleccionados";
+    }
+    if (action === "block" && days.size > 0 && manageHourSets.startSet.size === 0) {
+      return "No hay huecos libres: chocan con otros bloqueos";
     }
     return "";
   }
@@ -332,7 +402,7 @@ export default function StudentScheduleManageDialog({
       setPendingAvail([]);
       onOpenChange(false);
     } else if (action === "block") {
-      await onSaveBlock(targets, [...days], Number(start), Number(end));
+      await onSaveBlock(targets, [...days], Number(start), Number(end), blockTitle.trim());
       onOpenChange(false);
     } else {
       const subjectId = Number(eventSubjectId);
@@ -370,9 +440,6 @@ export default function StudentScheduleManageDialog({
             <CalendarClock size={18} className="text-blue-600" />
             Gestionar horario
           </DialogTitle>
-          <DialogDescription>
-            Añade clases, franjas de disponibilidad o bloquea horas. Elige a quién afecta y qué quieres hacer.
-          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 overflow-y-auto" style={{ maxHeight: "62dvh" }}>
@@ -380,13 +447,13 @@ export default function StudentScheduleManageDialog({
             <Label>¿Qué quieres hacer?</Label>
             <div className="flex flex-wrap gap-2 mt-1">
               <button type="button" onClick={() => setAction("event")} className={`chip ${action === "event" ? "chip-active" : ""}`}>
-                Añadir evento
+                Añadir o modificar evento
               </button>
               <button type="button" onClick={() => setAction("availability")} className={`chip ${action === "availability" ? "chip-active" : ""}`}>
-                Añadir disponibilidad
+                Añadir o modificar disponibilidad
               </button>
               <button type="button" onClick={() => setAction("block")} className={`chip ${action === "block" ? "chip-active" : ""}`}>
-                Bloquear horas
+                Añadir o modificar bloqueos
               </button>
             </div>
           </div>
@@ -419,7 +486,7 @@ export default function StudentScheduleManageDialog({
             <div>
               <Label htmlFor="sm-grade">Curso</Label>
               {grades.length === 0 ? (
-                <p className="text-xs text-gray-500 mt-1">Ningún alumno tiene curso asignado.</p>
+                <p className="text-xs text-gray-500 mt-1">Ningún alumno con curso.</p>
               ) : (
                 <Select value={grade} onValueChange={setGrade}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
@@ -435,10 +502,15 @@ export default function StudentScheduleManageDialog({
               <Label>Alumnos</Label>
               <div className="space-y-1.5 mt-1 max-h-[28dvh] overflow-y-auto">
                 {students.map((s) => (
-                  <label key={s.id} className="flex items-center gap-2.5 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-blue-600"
+                  <label
+                    key={s.id}
+                    className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-sm cursor-pointer transition-colors ${
+                      group.has(s.id)
+                        ? "bg-[#eff6ff] border-[var(--accent)]/40"
+                        : "bg-gray-50 border-gray-100"
+                    }`}
+                  >
+                    <Checkbox
                       checked={group.has(s.id)}
                       onChange={() => setGroup((prev) => {
                         const n = new Set(prev);
@@ -466,7 +538,7 @@ export default function StudentScheduleManageDialog({
             <div>
               <Label htmlFor="sm-subject">Asignatura</Label>
               {eventSubjects.length === 0 ? (
-                <p className="text-xs text-gray-500 mt-1">Ningún alumno seleccionado tiene asignaturas inscritas.</p>
+                <p className="text-xs text-gray-500 mt-1">Sin asignaturas en la selección.</p>
               ) : (
                 <Select value={eventSubjectId} onValueChange={setEventSubjectId}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
@@ -514,7 +586,7 @@ export default function StudentScheduleManageDialog({
                         kind: "availability",
                         student: singleTarget,
                         range: r,
-                        label: `¿Quitar la franja de disponibilidad de ${singleTarget.name} el ${fmtDayRange(r.day, r.start, r.end)}?`,
+                        label: `¿Quitar disponibilidad de ${singleTarget.name} el ${fmtDayRange(r.day, r.start, r.end)}?`,
                       })}
                       className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-emerald-100"
                       aria-label="Quitar franja"
@@ -533,14 +605,14 @@ export default function StudentScheduleManageDialog({
               <div className="flex flex-wrap gap-1.5">
                 {(singleTarget.blockedRanges ?? []).map((r, i) => (
                   <span key={i} className="inline-flex items-center gap-1 text-xs bg-white text-red-800 border border-red-200 rounded-full pl-2.5 pr-1 py-0.5">
-                    {fmtDayRange(r.day, r.start, r.end)}
+                    {r.title?.trim() ? `${r.title.trim()} · ` : ""}{fmtDayRange(r.day, r.start, r.end)}
                     <button
                       type="button"
                       onClick={() => setConfirmRemove({
                         kind: "block",
                         student: singleTarget,
                         index: i,
-                        label: `¿Quitar el bloqueo de ${singleTarget.name} el ${fmtDayRange(r.day, r.start, r.end)}?`,
+                        label: `¿Quitar bloqueo${r.title?.trim() ? ` «${r.title.trim()}»` : ""} de ${singleTarget.name} el ${fmtDayRange(r.day, r.start, r.end)}?`,
                       })}
                       className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-red-100"
                       aria-label="Quitar bloqueo"
@@ -570,17 +642,31 @@ export default function StudentScheduleManageDialog({
             <p className="text-xs font-medium text-gray-600">
               {action === "event" ? "Nuevo evento (clase)" : action === "availability" ? "Nueva franja de disponibilidad" : "Nuevo bloqueo"}
             </p>
+            {action === "block" && (
+              <div>
+                <Label htmlFor="st-block-title">Nombre</Label>
+                <Input
+                  id="st-block-title"
+                  value={blockTitle}
+                  onChange={(e) => setBlockTitle(e.target.value)}
+                  placeholder="Ej: Extraescolar, viaje, médico…"
+                />
+              </div>
+            )}
             <div>
               <Label>Días</Label>
               <div className="flex flex-wrap gap-2 mt-1">
                 {DAYS.map((d, i) => (
                   <label
                     key={i}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-sm cursor-pointer ${days.has(i) ? "bg-blue-50 border-blue-200 text-blue-800" : "bg-white border-gray-100"}`}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${
+                      days.has(i)
+                        ? "bg-[#eff6ff] border-[var(--accent)] text-[var(--accent)]"
+                        : "bg-white border-gray-200 text-gray-700"
+                    }`}
                   >
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 accent-blue-600"
+                    <Checkbox
+                      size="sm"
                       checked={days.has(i)}
                       onChange={() => toggleDay(i)}
                     />
@@ -596,14 +682,14 @@ export default function StudentScheduleManageDialog({
                   <Select value={start} onValueChange={setStart}>
                     <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                     <SelectContent>
-                      {HOURS_START.map((o) => hourItem(o, eventHourSets.startSet))}
+                      {HOURS_START.map((o) => hourItem(o, hourSets.startSet))}
                     </SelectContent>
                   </Select>
                 ) : (
-                  <Select value={start} onValueChange={setStart}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                  <Select value={start} onValueChange={setStart} disabled={hourSets.startSet.size === 0}>
+                    <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                     <SelectContent>
-                      {HOURS_START.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                      {HOURS_START.map((o) => hourItem(o, hourSets.startSet))}
                     </SelectContent>
                   </Select>
                 )}
@@ -615,17 +701,17 @@ export default function StudentScheduleManageDialog({
                     {eventEndLabel}
                   </div>
                 ) : (
-                  <Select value={end} onValueChange={setEnd}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                  <Select value={end} onValueChange={setEnd} disabled={hourSets.endSet.size === 0}>
+                    <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                     <SelectContent>
-                      {HOURS_END.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                      {HOURS_END.map((o) => hourItem(o, hourSets.endSet))}
                     </SelectContent>
                   </Select>
                 )}
               </div>
             </div>
             {action === "availability" && (
-              <Button type="button" variant="outline" className="w-full" onClick={addPendingAvailForEachDay}>
+              <Button type="button" variant="outline" className="w-full" onClick={addPendingAvailForEachDay} disabled={hourSets.startSet.size === 0 || hourSets.endSet.size === 0}>
                 <Plus size={14} /> Añadir franja{days.size > 1 ? "s" : ""}
               </Button>
             )}
@@ -633,19 +719,19 @@ export default function StudentScheduleManageDialog({
 
           {action === "event" && (
             <p className="text-xs text-gray-500">
-              Solo se muestran horas dentro de la disponibilidad del profesor y del alumno. La hora de fin se calcula según la duración de la asignatura.
+              Solo dentro del horario disponible; no pueden solapar otros eventos o bloqueos.
             </p>
           )}
 
           {action === "block" && (
             <p className="text-xs text-gray-500">
-              Las horas bloqueadas no se podrán usar en solicitudes ni en el auto-agendado.
+              Pueden estar fuera de la disponibilidad; no pueden solapar otros bloqueos.
             </p>
           )}
 
           {action === "availability" && (
             <p className="text-xs text-gray-500">
-              No puedes marcar como disponibles horas que ya están bloqueadas para el alumno.
+              Solo horas libres, sin bloqueos.
             </p>
           )}
 

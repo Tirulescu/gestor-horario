@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Ban, CalendarClock, Plus, Save, X } from "lucide-react";
+import { CalendarClock, CalendarPlus, Plus, Save, X } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
@@ -12,9 +12,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DAYS } from "@/lib/validate";
 import { fmtDayRange, hourOptions } from "@/lib/hours";
-import { slotOverlapsBlocked, type TimeRange } from "@/lib/studentAvailability";
+import {
+  getFreeHourSetsForDays,
+  slotOverlapsBlocked,
+  type TimeRange,
+} from "@/lib/studentAvailability";
 
 type ActionType = "availability" | "block";
 
@@ -43,12 +48,17 @@ interface TeacherScheduleManageDialogProps {
   onOpenChange: (open: boolean) => void;
   availabilities: Availability[];
   teacherBlocks: TeacherBlock[];
+  /** Clases ya asignadas: no pueden solapar con nuevos eventos. */
+  assignments?: { dayOfWeek: number; startHour: number; endHour: number }[];
   saving?: boolean;
   onSaveAvailability: (ranges: TimeRange[]) => Promise<void>;
   onSaveBlock: (days: number[], start: number, end: number, title: string) => Promise<void>;
   onRemoveAvailability: (id: number) => Promise<void>;
   onRemoveBlock: (id: number) => Promise<void>;
 }
+
+const HOURS_START = hourOptions(8, 23);
+const HOURS_END = hourOptions(9, 24);
 
 function blocksToRanges(blocks: TeacherBlock[]): TimeRange[] {
   return blocks.map((b) => ({ day: b.dayOfWeek, start: b.startHour, end: b.endHour }));
@@ -59,6 +69,7 @@ export default function TeacherScheduleManageDialog({
   onOpenChange,
   availabilities,
   teacherBlocks,
+  assignments = [],
   saving = false,
   onSaveAvailability,
   onSaveBlock,
@@ -75,6 +86,28 @@ export default function TeacherScheduleManageDialog({
   const [confirmRemove, setConfirmRemove] = useState<ConfirmRemove>(null);
 
   const blockedRanges = useMemo(() => blocksToRanges(teacherBlocks), [teacherBlocks]);
+  const occupiedRanges = useMemo(
+    () => [
+      ...blockedRanges,
+      ...assignments.map((a) => ({ day: a.dayOfWeek, start: a.startHour, end: a.endHour })),
+    ],
+    [blockedRanges, assignments],
+  );
+
+  const hourSets = useMemo(() => {
+    // Eventos: pueden estar fuera de la disponibilidad, pero no solapar eventos/clases.
+    if (action === "block") {
+      return getFreeHourSetsForDays([...days], occupiedRanges, HOURS_START, HOURS_END, start);
+    }
+    // Disponibilidad: solo huecos libres (sin eventos/reservas del profesor).
+    return getFreeHourSetsForDays(
+      [...days],
+      [...blockedRanges, ...pendingAvail],
+      HOURS_START,
+      HOURS_END,
+      start,
+    );
+  }, [action, days, blockedRanges, occupiedRanges, pendingAvail, start]);
 
   useEffect(() => {
     if (!open) {
@@ -95,6 +128,20 @@ export default function TeacherScheduleManageDialog({
     setAddErr("");
   }, [action, days, start, end, blockTitle]);
 
+  useEffect(() => {
+    if (hourSets.startSet.size === 0) return;
+    if (!hourSets.startSet.has(start)) {
+      setStart(Array.from(hourSets.startSet)[0]);
+    }
+  }, [hourSets.startSet, start, action, days, pendingAvail]);
+
+  useEffect(() => {
+    if (hourSets.endSet.size === 0) return;
+    if (!hourSets.endSet.has(end)) {
+      setEnd(Array.from(hourSets.endSet)[0]);
+    }
+  }, [hourSets.endSet, end]);
+
   function toggleDay(day: number) {
     setDays((prev) => {
       const n = new Set(prev);
@@ -109,16 +156,28 @@ export default function TeacherScheduleManageDialog({
     if (start === "" || end === "") return "";
     if (!(Number(end) > Number(start))) return "La hora de fin debe ser posterior a la de inicio";
     if (action === "availability" && pendingAvail.length === 0) return "Añade al menos una franja de disponibilidad";
+    if (action === "availability" && hourSets.startSet.size === 0) {
+      return "No hay horas libres (sin eventos) para los días seleccionados";
+    }
+    if (action === "block" && hourSets.startSet.size === 0) {
+      return "No hay huecos libres: chocan con otros eventos";
+    }
+    if (action === "block" && !blockTitle.trim()) return "El motivo es obligatorio";
     return "";
   }
   const err = formErr();
+
+  function hourItem(o: { value: string; label: string }, allowed: Set<string>) {
+    if (!allowed.has(o.value)) return null;
+    return <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>;
+  }
 
   function blockedConflictMessage(range: TimeRange): string | null {
     if (slotOverlapsBlocked(range.day, range.start, range.end, blockedRanges)) {
       const hit = teacherBlocks.find(
         (b) => b.dayOfWeek === range.day && b.endHour > range.start && b.startHour < range.end
       );
-      const label = hit?.title ? `«${hit.title}»` : "un evento bloqueado";
+      const label = hit?.title ? `«${hit.title}»` : "un evento";
       return `La franja ${fmtDayRange(range.day, range.start, range.end)} choca con ${label}`;
     }
     return null;
@@ -189,9 +248,7 @@ export default function TeacherScheduleManageDialog({
             <CalendarClock size={18} className="text-blue-600" />
             Gestionar horario
           </DialogTitle>
-          <DialogDescription>
-            Añade franjas de disponibilidad o bloquea horas para reuniones y otros eventos.
-          </DialogDescription>
+          <DialogDescription>Disponibilidad o eventos.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 overflow-y-auto" style={{ maxHeight: "62dvh" }}>
@@ -199,17 +256,17 @@ export default function TeacherScheduleManageDialog({
             <Label>¿Qué quieres hacer?</Label>
             <div className="flex flex-wrap gap-2 mt-1">
               <button type="button" onClick={() => setAction("availability")} className={`chip ${action === "availability" ? "chip-active" : ""}`}>
-                Añadir disponibilidad
+                Añadir o modificar disponibilidad
               </button>
               <button type="button" onClick={() => setAction("block")} className={`chip ${action === "block" ? "chip-active" : ""}`}>
-                Bloquear horas
+                Añadir o modificar evento
               </button>
             </div>
           </div>
 
           {action === "availability" && teacherBlocks.length > 0 && (
             <div className="rounded-lg border border-red-100 bg-red-50/50 p-3 space-y-1.5">
-              <p className="text-xs font-medium text-red-900">Horas bloqueadas (no se pueden marcar como disponibles)</p>
+              <p className="text-xs font-medium text-red-900">Eventos (no se pueden marcar como disponibles)</p>
               <div className="flex flex-wrap gap-1.5">
                 {teacherBlocks.map((b) => (
                   <span key={b.id} className="text-xs bg-white text-red-800 border border-red-200 rounded-full px-2.5 py-0.5">
@@ -232,7 +289,7 @@ export default function TeacherScheduleManageDialog({
                       onClick={() => setConfirmRemove({
                         kind: "availability",
                         id: a.id,
-                        label: `¿Quitar la franja de disponibilidad del ${fmtDayRange(a.dayOfWeek, a.startHour, a.endHour)}?`,
+                        label: `¿Quitar disponibilidad del ${fmtDayRange(a.dayOfWeek, a.startHour, a.endHour)}?`,
                       })}
                       className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-emerald-100"
                       aria-label="Quitar franja"
@@ -247,7 +304,7 @@ export default function TeacherScheduleManageDialog({
 
           {action === "block" && teacherBlocks.length > 0 && (
             <div className="rounded-lg border border-red-100 bg-red-50/50 p-3 space-y-1.5">
-              <p className="text-xs font-medium text-red-900">Bloqueos actuales</p>
+              <p className="text-xs font-medium text-red-900">Eventos actuales</p>
               <div className="flex flex-wrap gap-1.5">
                 {teacherBlocks.map((b) => (
                   <span key={b.id} className="inline-flex items-center gap-1 text-xs bg-white text-red-800 border border-red-200 rounded-full pl-2.5 pr-1 py-0.5">
@@ -257,10 +314,10 @@ export default function TeacherScheduleManageDialog({
                       onClick={() => setConfirmRemove({
                         kind: "block",
                         id: b.id,
-                        label: `¿Quitar el bloqueo «${b.title}» del ${fmtDayRange(b.dayOfWeek, b.startHour, b.endHour)}?`,
+                        label: `¿Quitar el evento «${b.title}» del ${fmtDayRange(b.dayOfWeek, b.startHour, b.endHour)}?`,
                       })}
                       className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-red-100"
-                      aria-label="Quitar bloqueo"
+                      aria-label="Quitar evento"
                     >
                       <X size={11} />
                     </button>
@@ -285,16 +342,17 @@ export default function TeacherScheduleManageDialog({
 
           <div className="rounded-lg border border-gray-100 bg-gray-50/80 p-3 space-y-3">
             <p className="text-xs font-medium text-gray-600">
-              {action === "availability" ? "Nueva franja de disponibilidad" : "Nuevo bloqueo"}
+              {action === "availability" ? "Nueva franja de disponibilidad" : "Nuevo evento"}
             </p>
             {action === "block" && (
               <div>
-                <Label htmlFor="tb-title">Motivo (opcional)</Label>
+                <Label htmlFor="tb-title">Motivo</Label>
                 <Input
                   id="tb-title"
                   value={blockTitle}
                   onChange={(e) => setBlockTitle(e.target.value)}
                   placeholder="Ej: Reunión de departamento"
+                  required
                 />
               </div>
             )}
@@ -304,11 +362,14 @@ export default function TeacherScheduleManageDialog({
                 {DAYS.map((d, i) => (
                   <label
                     key={i}
-                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-sm cursor-pointer ${days.has(i) ? "bg-blue-50 border-blue-200 text-blue-800" : "bg-white border-gray-100"}`}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${
+                      days.has(i)
+                        ? "bg-[#eff6ff] border-[var(--accent)] text-[var(--accent)]"
+                        : "bg-white border-gray-200 text-gray-700"
+                    }`}
                   >
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 accent-blue-600"
+                    <Checkbox
+                      size="sm"
                       checked={days.has(i)}
                       onChange={() => toggleDay(i)}
                     />
@@ -320,25 +381,25 @@ export default function TeacherScheduleManageDialog({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label>Desde</Label>
-                <Select value={start} onValueChange={setStart}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select value={start} onValueChange={setStart} disabled={hourSets.startSet.size === 0}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
-                    {hourOptions(8, 23).map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                    {HOURS_START.map((o) => hourItem(o, hourSets.startSet))}
                   </SelectContent>
                 </Select>
               </div>
               <div>
                 <Label>Hasta</Label>
-                <Select value={end} onValueChange={setEnd}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select value={end} onValueChange={setEnd} disabled={hourSets.endSet.size === 0}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
-                    {hourOptions(9, 24).map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                    {HOURS_END.map((o) => hourItem(o, hourSets.endSet))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
             {action === "availability" && (
-              <Button type="button" variant="outline" className="w-full" onClick={addPendingAvailForEachDay}>
+              <Button type="button" variant="outline" className="w-full" onClick={addPendingAvailForEachDay} disabled={hourSets.startSet.size === 0 || hourSets.endSet.size === 0}>
                 <Plus size={14} /> Añadir franja{days.size > 1 ? "s" : ""}
               </Button>
             )}
@@ -346,13 +407,13 @@ export default function TeacherScheduleManageDialog({
 
           {action === "availability" && (
             <p className="text-xs text-gray-500">
-              No puedes marcar como disponibles horas que ya están bloqueadas.
+              Solo horas libres, sin eventos.
             </p>
           )}
 
           {action === "block" && (
             <p className="text-xs text-gray-500">
-              Las horas bloqueadas no se usarán en solicitudes ni en el auto-agendado.
+              Pueden estar fuera de tu disponibilidad; no pueden solapar otros eventos o clases.
             </p>
           )}
 
@@ -369,7 +430,7 @@ export default function TeacherScheduleManageDialog({
             {action === "availability" ? (
               <><Save size={14} /> Guardar disponibilidad{pendingAvail.length > 0 ? ` (${pendingAvail.length})` : ""}</>
             ) : (
-              <><Ban size={14} /> Bloquear</>
+              <><CalendarPlus size={14} /> Añadir evento</>
             )}
           </Button>
         </DialogFooter>
@@ -380,7 +441,7 @@ export default function TeacherScheduleManageDialog({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmRemove?.kind === "block" ? "Quitar bloqueo" : "Quitar disponibilidad"}
+              {confirmRemove?.kind === "block" ? "Quitar evento" : "Quitar disponibilidad"}
             </AlertDialogTitle>
             <AlertDialogDescription>{confirmRemove?.label}</AlertDialogDescription>
           </AlertDialogHeader>

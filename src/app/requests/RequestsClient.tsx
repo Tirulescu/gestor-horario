@@ -88,7 +88,7 @@ function SlotRow({ r, ri, total, busy, moveSlot, openEdit, setConfirmTarget, m }
       </span>
       <div className="flex items-center gap-1 shrink-0 ml-auto">
         <Button size="iconSm" variant="outline" onClick={() => openEdit(r)} aria-label="Editar solicitud"><Pencil size={12} /></Button>
-        <Button size="iconSm" variant="destructive" onClick={() => setConfirmTarget({ kind: "slot", id: r.id, label: `¿Borrar solicitud ${DAYS[r.dayOfWeek]} ${fmtRange(r.startHour, r.endHour)} de ${m.student.name}?` })} aria-label="Borrar"><Trash2 size={12} /></Button>
+        <Button size="iconSm" variant="destructive" onClick={() => setConfirmTarget({ kind: "slot", id: r.id, label: `¿Borrar ${DAYS[r.dayOfWeek]} ${fmtRange(r.startHour, r.endHour)} de ${m.student.name}?` })} aria-label="Borrar"><Trash2 size={12} /></Button>
       </div>
     </Reorder.Item>
   );
@@ -627,14 +627,14 @@ export default function RequestsClient() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <PageHeader
         icon={Inbox}
         title="Solicitudes de horario"
         description={
           activeSubject
-            ? `Preferencias de horario en ${activeSubject.name}.`
-            : "Elige una asignatura para gestionar las solicitudes de cada alumno."
+            ? `Preferencias en ${activeSubject.name}.`
+            : "Elige una asignatura."
         }
         actions={
           loadingSubjects ? undefined : subjects.length === 0 ? (
@@ -645,7 +645,7 @@ export default function RequestsClient() {
               </Link>
             </Button>
           ) : activeSubject ? (
-            <Button variant="outline" asChild>
+            <Button asChild>
               <Link href={`/subjects/${activeSubject.id}`}>
                 <BookOpen size={16} />
                 <span className="sm:hidden">Asignatura</span>
@@ -665,7 +665,7 @@ export default function RequestsClient() {
               <ChipGroupSkeleton />
             </div>
           ) : subjects.length === 0 ? (
-            <p className="text-sm text-gray-500 mt-2">Crea una asignatura para empezar a recoger solicitudes.</p>
+            <p className="text-sm text-gray-500 mt-2">Crea una asignatura.</p>
           ) : (
             <Select
               value={activeSubjectId != null ? String(activeSubjectId) : ""}
@@ -805,7 +805,7 @@ export default function RequestsClient() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Editar solicitud</DialogTitle>
-            <DialogDescription>Cambia el día o la hora. Para cambiar el orden, usa las flechas o arrastra en la lista.</DialogDescription>
+            <DialogDescription>Cambia día u hora.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             {editRequiredDuration != null && (

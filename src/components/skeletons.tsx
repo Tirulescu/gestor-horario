@@ -69,8 +69,68 @@ export function EntityListSkeleton({ count = 4 }: { count?: number }) {
   );
 }
 
+/** Skeleton de cards con enlace (lista de asignaturas). */
+export function SubjectListSkeleton({ count = 4 }: { count?: number }) {
+  return (
+    <div className="entity-list" aria-busy="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="entity-card">
+          <div className="entity-card-link pointer-events-none">
+            <div className="entity-card-link-row">
+              <div className="entity-card-link-title">
+                <Skeleton className="h-9 w-9 shrink-0 rounded-[0.65rem]" />
+                <div className="min-w-0 space-y-2 flex-1">
+                  <Skeleton className="h-5 w-40 max-w-full" />
+                  <Skeleton className="h-3.5 w-36 max-w-full" />
+                </div>
+              </div>
+              <Skeleton className="h-5 w-5 shrink-0 rounded mt-1" />
+            </div>
+            <div className="entity-card-chips pl-[2.8rem]">
+              <Skeleton className="h-5 w-20 rounded-full" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <Skeleton className="h-5 w-24 rounded-full" />
+            </div>
+          </div>
+          <div className="entity-card-footer">
+            <Skeleton className="h-9 w-9 rounded-lg" />
+            <Skeleton className="h-9 w-9 rounded-lg" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function SubjectDetailSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true">
+      <div className="space-y-3">
+        <Skeleton className="h-11 w-36 rounded-[0.6rem]" />
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-56 max-w-full" />
+            <Skeleton className="h-4 w-48 max-w-full" />
+          </div>
+          <HeaderActionsSkeleton />
+        </div>
+      </div>
+      <Card className="p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Skeleton className="h-6 w-40" />
+          <div className="flex gap-2">
+            <Skeleton className="h-9 w-32 rounded-lg" />
+            <Skeleton className="h-9 w-36 rounded-lg" />
+          </div>
+        </div>
+        <MemberCardSkeleton count={3} />
+      </Card>
+    </div>
+  );
+}
+
 export function WeekGridSkeleton() {
-  return <CardSkeleton rows={1} rowClassName="h-[26rem]" />;
+  return <CardSkeleton rows={1} rowClassName="h-[32rem]" />;
 }
 
 export function ChipGroupSkeleton({ count = 3 }: { count?: number }) {
@@ -135,10 +195,9 @@ export function BadgeGroupSkeleton() {
 export function HeaderActionsSkeleton() {
   return (
     <div className="flex flex-wrap gap-2 items-center" aria-busy="true">
-      <Skeleton className="h-9 w-32 rounded-lg" />
-      <Skeleton className="h-9 w-36 rounded-lg" />
-      <Skeleton className="h-9 w-28 rounded-lg" />
-      <Skeleton className="h-9 w-36 sm:w-44 rounded-lg" />
+      <Skeleton className="h-11 w-32 rounded-[0.6rem]" />
+      <Skeleton className="h-11 w-40 rounded-[0.6rem]" />
+      <Skeleton className="h-11 w-28 rounded-[0.6rem]" />
     </div>
   );
 }

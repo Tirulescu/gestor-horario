@@ -1,7 +1,7 @@
 "use client";
 
 import { warmData, put, invalidate } from "@/lib/clientCache";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Pencil, Trash2, Save, X, BookOpen, Clock, ChevronRight, Users } from "lucide-react";
 import {
@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
-import { TableCardSkeleton } from "@/components/skeletons";
+import { SubjectListSkeleton } from "@/components/skeletons";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
 
 interface Subject {
@@ -43,11 +43,19 @@ export default function SubjectsPage() {
 
   async function load() {
     const cached = warmData<Subject[]>("/api/subjects");
-    if (cached !== null) setSubjects(cached);
+    if (cached !== null) {
+      setSubjects(cached);
+      return;
+    }
     const s = await fetch("/api/subjects").then((r) => r.json());
     setSubjects(s);
     put("/api/subjects", s);
   }
+
+  useLayoutEffect(() => {
+    const cached = warmData<Subject[]>("/api/subjects");
+    if (cached !== null) setSubjects(cached);
+  }, []);
 
   useEffect(() => { load(); }, []);
 
@@ -130,11 +138,11 @@ export default function SubjectsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       <PageHeader
         icon={BookOpen}
         title="Asignaturas"
-        description="Organiza tus materias, duración de sesiones y alumnos inscritos."
+        description="Materias, duración y alumnos."
         actions={
           <Button onClick={openNew}>
             <Plus size={16} />
@@ -144,7 +152,7 @@ export default function SubjectsPage() {
       />
 
       {subjects === null ? (
-        <TableCardSkeleton rows={4} />
+        <SubjectListSkeleton count={4} />
       ) : visibleSubjects.length === 0 ? (
         <div className="entity-card text-gray-400 text-sm">No hay asignaturas aún</div>
       ) : (
@@ -226,15 +234,15 @@ export default function SubjectsPage() {
               <Input className="w-32" type="number" min={5} step={5} value={defaultDurationMin} onChange={(e) => setDefaultDurationMin(e.target.value)} required />
               <p className="text-xs text-gray-500 mt-1">
                 {isCollective
-                  ? "Duración exacta de la clase colectiva (ej. 90 = 1 h 30 min)."
-                  : "Duración por defecto de cada clase individual (ej. 90 = 1 h 30 min)."}
+                  ? "Ej. 90 = 1 h 30 min."
+                  : "Por defecto en cada clase. Ej. 90 = 1 h 30 min."}
               </p>
             </div>
             <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 px-3 py-2">
               <div>
-                <Label htmlFor="is-collective">Asignatura colectiva</Label>
+                <Label htmlFor="is-collective" className="mb-0">Asignatura colectiva</Label>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Todos los alumnos comparten una misma hora. El auto-agendado elige el hueco con más alumnos posibles.
+                  Misma hora para todos los alumnos.
                 </p>
               </div>
               <Switch id="is-collective" checked={isCollective} onCheckedChange={setIsCollective} />
@@ -251,7 +259,7 @@ export default function SubjectsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar borrado</AlertDialogTitle>
-            <AlertDialogDescription>¿Seguro que quieres borrar esta asignatura? Se borrarán en cascada alumnos inscritos, posibilidades y asignaciones.</AlertDialogDescription>
+            <AlertDialogDescription>¿Borrar esta asignatura y sus datos?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>

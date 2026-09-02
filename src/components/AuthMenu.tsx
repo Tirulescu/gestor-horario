@@ -1,52 +1,44 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronDown, LogIn, LogOut, User as UserIcon } from "lucide-react";
+import { CircleUserRound, LogIn, LogOut, User as UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AuthMenuSkeleton } from "@/components/skeletons";
 import { createClient } from "@/lib/supabase/client";
-import { getGoogleAvatarUrl, getGoogleDisplayName } from "@/lib/userDisplay";
+import { getGoogleDisplayName } from "@/lib/userDisplay";
 import type { User } from "@supabase/supabase-js";
 
-function UserAvatar({ name, avatarUrl, size = 28 }: { name: string; avatarUrl: string | null; size?: number }) {
-  if (avatarUrl) {
-    return (
-      <Image
-        src={avatarUrl}
-        alt=""
-        width={size}
-        height={size}
-        className="rounded-full shrink-0 ring-2 ring-white"
-        unoptimized
-      />
-    );
-  }
+type MenuPos = { top: number; right: number };
 
-  return (
-    <span
-      className="rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-semibold shrink-0 ring-2 ring-white"
-      style={{ width: size, height: size, fontSize: size * 0.38 }}
-    >
-      {name.charAt(0).toUpperCase()}
-    </span>
-  );
-}
+type AuthMenuProps = {
+  initialDisplayName?: string | null;
+  initialEmail?: string | null;
+};
 
-export default function AuthMenu() {
+export default function AuthMenu({
+  initialDisplayName = null,
+  initialEmail = null,
+}: AuthMenuProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [displayName, setDisplayName] = useState<string | null>(null);
-  const [email, setEmail] = useState<string | null>(null);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [displayName, setDisplayName] = useState<string | null>(initialDisplayName);
+  const [email, setEmail] = useState<string | null>(initialEmail);
+  const [loading, setLoading] = useState(initialDisplayName === null && initialEmail === null);
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<MenuPos | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const isAuthPage = pathname?.startsWith("/login") || pathname?.startsWith("/auth");
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (isAuthPage) {
@@ -60,45 +52,80 @@ export default function AuthMenu() {
       if (!user) {
         setDisplayName(null);
         setEmail(null);
-        setAvatarUrl(null);
         return;
       }
       setDisplayName(getGoogleDisplayName(user));
       setEmail(user.email ?? null);
-      setAvatarUrl(getGoogleAvatarUrl(user));
     }
 
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      syncUser(user);
+    let cancelled = false;
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (cancelled) return;
+      if (session?.user) syncUser(session.user);
       setLoading(false);
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      syncUser(session?.user ?? null);
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled) return;
+      if (session?.user) {
+        syncUser(session.user);
+      } else if (event === "SIGNED_OUT") {
+        syncUser(null);
+      }
+      setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, [isAuthPage]);
+
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) {
+      setMenuPos(null);
+      return;
+    }
+
+    function updatePos() {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuPos({
+        top: rect.bottom + 8,
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    }
+
+    updatePos();
+    window.addEventListener("resize", updatePos);
+    window.addEventListener("scroll", updatePos, true);
+    return () => {
+      window.removeEventListener("resize", updatePos);
+      window.removeEventListener("scroll", updatePos, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
 
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (buttonRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
     }
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
     }
 
-    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleEscape);
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleEscape);
     };
   }, [open]);
@@ -109,6 +136,7 @@ export default function AuthMenu() {
     setSigningOut(true);
     const supabase = createClient();
     await supabase.auth.signOut();
+    setOpen(false);
     router.push("/login");
     router.refresh();
   }
@@ -129,8 +157,9 @@ export default function AuthMenu() {
   }
 
   return (
-    <div className="auth-menu" ref={menuRef}>
+    <div className="auth-menu">
       <button
+        ref={buttonRef}
         type="button"
         className={`auth-user-chip ${open ? "auth-user-chip-open" : ""}`}
         title={displayName}
@@ -139,38 +168,46 @@ export default function AuthMenu() {
         aria-haspopup="menu"
         onClick={() => setOpen((prev) => !prev)}
       >
-        <UserAvatar name={displayName} avatarUrl={avatarUrl} size={28} />
+        <CircleUserRound size={22} strokeWidth={1.75} className="auth-user-glyph" aria-hidden />
         <span className="auth-user-name">{displayName}</span>
-        <ChevronDown size={14} className="auth-user-chevron" aria-hidden />
       </button>
 
-      {open && (
-        <div className="auth-menu-dropdown" role="menu">
-          <div className="auth-menu-header">
-            <p className="auth-menu-name">{displayName}</p>
-            {email && <p className="auth-menu-email">{email}</p>}
-          </div>
-          <div className="auth-menu-actions">
-            <Button asChild variant="outline" size="xs" className="w-full">
-              <Link href="/profile" role="menuitem" onClick={() => setOpen(false)}>
-                <UserIcon size={14} />
-                Perfil
-              </Link>
-            </Button>
-            <Button
-              variant="destructive"
-              size="xs"
-              className="w-full"
-              role="menuitem"
-              onClick={signOut}
-              disabled={signingOut}
-            >
-              <LogOut size={14} />
-              {signingOut ? "Cerrando…" : "Cerrar sesión"}
-            </Button>
-          </div>
-        </div>
-      )}
+      {mounted &&
+        open &&
+        menuPos &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            className="auth-menu-dropdown"
+            role="menu"
+            style={{ top: menuPos.top, right: menuPos.right }}
+          >
+            <div className="auth-menu-header">
+              <p className="auth-menu-name">{displayName}</p>
+              {email && <p className="auth-menu-email">{email}</p>}
+            </div>
+            <div className="auth-menu-actions">
+              <Button asChild variant="outline" size="xs" className="w-full">
+                <Link href="/profile" role="menuitem" onClick={() => setOpen(false)}>
+                  <UserIcon size={14} className="auth-menu-action-icon" />
+                  Perfil
+                </Link>
+              </Button>
+              <Button
+                variant="destructive"
+                size="xs"
+                className="w-full"
+                role="menuitem"
+                onClick={signOut}
+                disabled={signingOut}
+              >
+                <LogOut size={14} className="auth-menu-action-icon" />
+                {signingOut ? "Cerrando…" : "Cerrar sesión"}
+              </Button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

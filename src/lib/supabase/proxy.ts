@@ -29,8 +29,12 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/auth");
+  const isPublicPwaRoute =
+    pathname === "/manifest.webmanifest" ||
+    pathname.startsWith("/serwist/") ||
+    pathname.startsWith("/~offline");
 
-  if (!user && !isAuthRoute) {
+  if (!user && !isAuthRoute && !isPublicPwaRoute) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }

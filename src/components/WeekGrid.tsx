@@ -50,7 +50,7 @@ interface WeekGridProps {
   endH?: number;
   onBlockClick?: (b: WeekBlock) => void;
   showLegend?: boolean;
-  legend?: { label: string; color: string; dashed?: boolean }[];
+  legend?: { label: string; color: string; dashed?: boolean; striped?: boolean }[];
   /** Zonas fuera de disponibilidad (sombreado). */
   unavailable?: Record<number, { start: number; end: number }[]>;
   /** Zonas disponibles (contorno verde). */
@@ -83,7 +83,7 @@ export default function WeekGrid({
   blockedZones,
   onAvailClick,
   onBlockedClick,
-  hourHeight = 72,
+  hourHeight = 84,
   compact = false,
   expandMobile = false,
   allowFullscreen = false,
@@ -112,11 +112,19 @@ export default function WeekGrid({
   useEffect(() => {
     if (!isFullscreen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") exitFullscreen();
+      if (e.key !== "Escape") return;
+      // Detalle / franja encima del modo ampliado: no salir todavía.
+      if (
+        viewBlock != null ||
+        document.querySelector("[data-slot-overlap-dialog], [data-calendar-event-detail]")
+      ) {
+        return;
+      }
+      exitFullscreen();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isFullscreen, exitFullscreen]);
+  }, [isFullscreen, exitFullscreen, viewBlock]);
 
   useEffect(() => {
     const active = isFullscreen || (expandMobile && expanded);
@@ -194,7 +202,7 @@ export default function WeekGrid({
   }, [blocks]);
 
   const defaultLegend = useMemo(() => {
-    const items: { label: string; color: string; dashed?: boolean }[] = [];
+    const items: { label: string; color: string; dashed?: boolean; striped?: boolean }[] = [];
     if (availableZones && Object.keys(availableZones).length > 0) {
       items.push({ label: "Disponible", color: "#22c55e", dashed: true });
     }
@@ -264,13 +272,13 @@ export default function WeekGrid({
 
   const handleBlockClick = useCallback(
     (block: WeekBlock) => {
-      if (shouldFitViewport) {
-        setViewBlock(block);
+      if (onBlockClick) {
+        onBlockClick(block);
         return;
       }
-      onBlockClick?.(block);
+      setViewBlock(block);
     },
-    [shouldFitViewport, onBlockClick],
+    [onBlockClick],
   );
 
   const viewDialogRows: CalendarEventDetailRow[] = viewBlock
@@ -298,6 +306,44 @@ export default function WeekGrid({
     header.scrollLeft = body.scrollLeft;
     syncingScrollRef.current = false;
   }, []);
+
+  // Al llegar al tope/fondo del calendario, continuar el scroll en la página (o el diálogo).
+  useEffect(() => {
+    if (shouldFitViewport) return;
+    const body = bodyScrollRef.current;
+    if (!body) return;
+
+    const scrollOuterBy = (deltaY: number) => {
+      let node: HTMLElement | null = body.parentElement;
+      while (node && node !== document.documentElement) {
+        const { overflowY } = getComputedStyle(node);
+        const scrollable =
+          (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") &&
+          node.scrollHeight > node.clientHeight + 1;
+        if (scrollable) {
+          node.scrollTop += deltaY;
+          return;
+        }
+        node = node.parentElement;
+      }
+      window.scrollBy(0, deltaY);
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      const maxScroll = body.scrollHeight - body.clientHeight;
+      if (maxScroll <= 1) return;
+      const atTop = body.scrollTop <= 0;
+      const atBottom = body.scrollTop >= maxScroll - 1;
+      if ((e.deltaY > 0 && atBottom) || (e.deltaY < 0 && atTop)) {
+        e.preventDefault();
+        scrollOuterBy(e.deltaY);
+      }
+    };
+
+    body.addEventListener("wheel", onWheel, { passive: false });
+    return () => body.removeEventListener("wheel", onWheel);
+  }, [shouldFitViewport, isFullscreen, expanded, inDialog, lo, hi, effectiveHourHeight]);
 
   const gridMinWidth = shouldFitViewport
     ? undefined
@@ -449,7 +495,7 @@ export default function WeekGrid({
                   return (
                     <div
                       key={block.id}
-                      className={"weekgrid-pro-block" + (onBlockClick || shouldFitViewport ? " clickable" : "")}
+                      className="weekgrid-pro-block clickable"
                       style={{
                         position: "absolute",
                         top,
@@ -459,10 +505,10 @@ export default function WeekGrid({
                         background: block.color,
                       }}
                       onClick={() => handleBlockClick(block)}
-                      role={onBlockClick || shouldFitViewport ? "button" : undefined}
-                      tabIndex={onBlockClick || shouldFitViewport ? 0 : undefined}
+                      role="button"
+                      tabIndex={0}
                       onKeyDown={(e) => {
-                        if ((onBlockClick || shouldFitViewport) && (e.key === "Enter" || e.key === " ")) {
+                        if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           handleBlockClick(block);
                         }
@@ -488,8 +534,16 @@ export default function WeekGrid({
           {legendItems.map((l) => (
             <span key={l.label} className="weekgrid-legend-item">
               <span
-                className={"weekgrid-legend-swatch" + (l.dashed ? " dashed" : "")}
-                style={{ background: l.dashed ? "transparent" : l.color, borderColor: l.color }}
+                className={
+                  "weekgrid-legend-swatch" +
+                  (l.dashed ? " dashed" : "") +
+                  (l.striped ? " striped" : "")
+                }
+                style={
+                  l.striped
+                    ? undefined
+                    : { background: l.dashed ? "transparent" : l.color, borderColor: l.color }
+                }
               />
               {l.label}
             </span>
@@ -500,7 +554,7 @@ export default function WeekGrid({
   );
 
   const rootClass =
-    "weekgrid-root space-y-3" +
+    "weekgrid-root" +
     (compact ? " weekgrid-compact" : "") +
     (inDialog ? " weekgrid-in-dialog" : "") +
     (isFullscreen ? " weekgrid-is-fullscreen" : "") +
@@ -526,6 +580,7 @@ export default function WeekGrid({
             role="dialog"
             aria-modal="true"
             aria-label="Calendario ampliado"
+            style={{ pointerEvents: "auto" }}
           >
             <div className="weekgrid-fullscreen-toolbar">
               <span className="weekgrid-fullscreen-title">{fullscreenTitle}</span>
@@ -540,7 +595,16 @@ export default function WeekGrid({
               </button>
             </div>
             <div className="weekgrid-fullscreen-body" ref={fullscreenBodyRef}>
-              <div className={rootClass.replace(" weekgrid-is-fullscreen", "") + " weekgrid-fullscreen-host"}>{gridContent}</div>
+              <div
+                className={
+                  rootClass
+                    .replace(" weekgrid-is-fullscreen", "")
+                    .replace(" weekgrid-in-dialog", "") +
+                  " weekgrid-fullscreen-host"
+                }
+              >
+                {gridContent}
+              </div>
             </div>
           </div>,
           document.body

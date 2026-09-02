@@ -61,11 +61,11 @@ export default function ProfileClient() {
 
   if (!ready) {
     return (
-      <div className="max-w-2xl space-y-5">
+      <div className="page-stack max-w-2xl">
         <PageHeader
           icon={User}
           title="Mi perfil"
-          description="Datos de tu cuenta y preferencias de horario."
+          description="Cuenta y preferencias de horario."
         />
         <CardSkeleton rows={2} />
         <CardSkeleton rows={2} />
@@ -75,11 +75,11 @@ export default function ProfileClient() {
 
   if (!teacher) {
     return (
-      <div className="max-w-2xl space-y-5">
+      <div className="page-stack max-w-2xl">
         <PageHeader
           icon={User}
           title="Mi perfil"
-          description="Datos de tu cuenta y preferencias de horario."
+          description="Cuenta y preferencias de horario."
         />
         <Card className="p-5 text-sm text-gray-500">No se pudo cargar el perfil.</Card>
       </div>
@@ -87,11 +87,11 @@ export default function ProfileClient() {
   }
 
   return (
-    <div className="space-y-5 max-w-2xl">
+    <div className="page-stack max-w-2xl">
       <PageHeader
         icon={User}
         title="Mi perfil"
-        description="Datos de tu cuenta y preferencias de horario."
+        description="Cuenta y preferencias de horario."
       />
 
       <Card className="p-5 space-y-4">
@@ -114,13 +114,13 @@ export default function ProfileClient() {
           <div className="space-y-1 flex-1">
             <div className="flex items-center gap-2">
               <Lock size={16} className="text-amber-600" />
-              <Label htmlFor="schedule-fixed" className="text-base font-semibold cursor-pointer">
+              <Label htmlFor="schedule-fixed" className="text-base font-semibold cursor-pointer mb-0">
                 Fijar horario
               </Label>
               {teacher.scheduleFixed && <Badge variant="warn">Activo</Badge>}
             </div>
             <p id="schedule-fixed-desc" className="text-sm text-gray-500 leading-relaxed">
-              Impide que el auto-agendado modifique tu horario. Los eventos siguen siendo editables manualmente.
+              Bloquea el auto-agendado. Puedes seguir editando a mano.
             </p>
           </div>
           <Switch

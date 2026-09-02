@@ -24,9 +24,177 @@ html, body {
   background: var(--bg);
   color: #111827;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 * { -webkit-tap-highlight-color: transparent; }
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  min-height: 100dvh;
+  min-height: 100svh;
+}
+
+button, a, [role="button"], .btn, .dock-item, .chip, .tab-item {
+  touch-action: manipulation;
+}
+
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html, body {
+    overscroll-behavior: none;
+  }
+}
+
+/* ---------- PWA: prompt de instalación ---------- */
+.install-prompt {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  width: min(calc(100vw - 1.5rem), 28rem);
+  pointer-events: none;
+}
+@media (max-width: 767px) {
+  .install-prompt-dock {
+    bottom: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+  }
+}
+.install-prompt-inner {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0.75rem 0.7rem 0.8rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(16px);
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 32px rgb(15 23 42 / 0.16);
+}
+.install-prompt-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 0.75rem;
+  background: #eff6ff;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.install-prompt-copy { min-width: 0; flex: 1; }
+.install-prompt-title {
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: #111827;
+  line-height: 1.2;
+}
+.install-prompt-text {
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+  line-height: 1.35;
+}
+.install-prompt-share {
+  display: inline;
+  vertical-align: -2px;
+  color: var(--accent);
+}
+.install-prompt-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  border-radius: 999px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.install-prompt-close:hover { background: #f3f4f6; color: #374151; }
+
+/* ---------- PWA: pantalla offline ---------- */
+.offline-page {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding:
+    calc(1.5rem + env(safe-area-inset-top, 0px))
+    1.25rem
+    calc(1.5rem + env(safe-area-inset-bottom, 0px));
+}
+.offline-page-card {
+  width: min(100%, 22rem);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+}
+.offline-page-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 1rem;
+  background: var(--accent);
+  color: white;
+  box-shadow: 0 8px 20px rgb(37 99 235 / 0.28);
+}
+.offline-page-icon {
+  display: inline-flex;
+  color: #94a3b8;
+  margin-top: 0.35rem;
+}
+.offline-page h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #111827;
+}
+.offline-page p {
+  font-size: 0.9rem;
+  color: #6b7280;
+  line-height: 1.5;
+}
+
+/* ---------- Diálogos nativos (bottom sheet en móvil) ---------- */
+@media (max-width: 767px) {
+  .app-dialog {
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: min(92dvh, 100%) !important;
+    border-radius: 1.25rem 1.25rem 0 0;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+  }
+  dialog.modal-dialog {
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    margin: 0;
+    width: 100%;
+    max-width: none !important;
+    border-radius: 1.25rem 1.25rem 0 0;
+    max-height: min(92dvh, 100%);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation: sheetUp 0.28s ease-out;
+  }
+}
 
 :focus-visible {
   outline: 2px solid var(--accent);
@@ -429,6 +597,7 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
   backdrop-filter: blur(12px);
   border-bottom: 1px solid #e5e7eb;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.03), 0 4px 16px rgb(0 0 0 / 0.04);
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 .page-header {
@@ -437,7 +606,8 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0;
+  flex-shrink: 0;
 }
 .page-description {
   margin-top: 0.35rem;
@@ -456,7 +626,7 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
   .page-header {
     flex-direction: column;
     align-items: stretch;
-    gap: 0.75rem;
+    gap: 1rem;
   }
   .page-header-actions {
     width: 100%;
@@ -468,21 +638,35 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
   }
 }
 
+/* Separación fiable cabecera/acciones → contenido (space-y de Tailwind se anula en flex/grid) */
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+.dashboard-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
 /* ---------- Auth user menu ---------- */
 .auth-menu {
   position: relative;
+  flex-shrink: 0;
 }
 .auth-user-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
   border-radius: 999px;
   border: 1px solid #e5e7eb;
   background: white;
-  padding: 0.15rem;
+  color: #374151;
+  padding: 0;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
   width: 2.25rem;
   height: 2.25rem;
 }
@@ -490,19 +674,23 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
 .auth-user-chip-open {
   background: #f9fafb;
   border-color: #d1d5db;
+  color: #111827;
 }
 .auth-user-chip-open {
   box-shadow: 0 0 0 2px #dbeafe;
 }
-.auth-user-name,
-.auth-user-chevron {
+.auth-user-glyph {
+  width: 1.35rem;
+  height: 1.35rem;
+  max-width: none;
+  flex-shrink: 0;
+}
+.auth-user-name {
   display: none;
 }
 .auth-menu-dropdown {
-  position: absolute;
-  top: calc(100% + 0.5rem);
-  right: 0;
-  z-index: 50;
+  position: fixed;
+  z-index: 80;
   min-width: 12rem;
   border-radius: 0.75rem;
   border: 1px solid #e5e7eb;
@@ -510,6 +698,12 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
   padding: 0.35rem;
   animation: auth-menu-in 0.15s ease;
+}
+.auth-menu-action-icon {
+  width: 0.875rem;
+  height: 0.875rem;
+  max-width: none;
+  flex-shrink: 0;
 }
 @keyframes auth-menu-in {
   from { opacity: 0; transform: translateY(-4px); }
@@ -544,9 +738,9 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
 @media (min-width: 640px) {
   .auth-user-chip {
     width: auto;
-    height: auto;
+    height: 2.25rem;
     max-width: 14rem;
-    padding: 0.2rem 0.65rem 0.2rem 0.2rem;
+    padding: 0 0.75rem 0 0.55rem;
     justify-content: flex-start;
   }
   .auth-user-name {
@@ -557,15 +751,6 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .auth-user-chevron {
-    display: block;
-    color: #9ca3af;
-    flex-shrink: 0;
-    transition: transform 0.15s ease;
-  }
-  .auth-user-chip-open .auth-user-chevron {
-    transform: rotate(180deg);
   }
 }
 
@@ -630,6 +815,10 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
 
 .login-layout {
   background: linear-gradient(160deg, #eff6ff 0%, var(--bg) 45%, #f8fafc 100%);
+  padding-top: max(3rem, env(safe-area-inset-top, 0px));
+  padding-bottom: max(3rem, env(safe-area-inset-bottom, 0px));
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
 }
 
 .app-logo {
@@ -763,14 +952,19 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
 }
 
 /* ---------- WeekGrid PRO (calendario proporcional) ---------- */
-.weekgrid-root { --weekgrid-col-min: 128px; --weekgrid-gutter: 52px; }
-.weekgrid-compact { --weekgrid-col-min: 96px; }
+.weekgrid-root {
+  --weekgrid-col-min: 156px;
+  --weekgrid-gutter: 52px;
+  display: flex;
+  flex-direction: column;
+}
+.weekgrid-compact { --weekgrid-col-min: 132px; }
 
 .weekgrid-pro-wrap {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  max-height: 82dvh;
+  max-height: 88dvh;
   border-radius: 0.75rem;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.06), 0 4px 12px rgb(0 0 0 / 0.04);
 }
@@ -804,7 +998,9 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
   flex: 1 1 auto;
   min-height: 0;
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  /* Encadena el scroll vertical a la página al llegar a los extremos */
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
   scrollbar-gutter: stable;
   touch-action: pan-x pan-y;
 }
@@ -814,15 +1010,16 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
 }
 
 @media (min-width: 768px) and (max-width: 1023px) {
-  .weekgrid-root { --weekgrid-col-min: 108px; }
-  .weekgrid-pro-wrap { max-height: 78dvh; }
+  .weekgrid-root { --weekgrid-col-min: 140px; }
+  .weekgrid-compact { --weekgrid-col-min: 124px; }
+  .weekgrid-pro-wrap { max-height: 84dvh; }
 }
 
 @media (max-width: 767px) {
-  .weekgrid-root { --weekgrid-col-min: 92px; }
-  .weekgrid-compact { --weekgrid-col-min: 80px; }
+  .weekgrid-root { --weekgrid-col-min: 118px; }
+  .weekgrid-compact { --weekgrid-col-min: 108px; }
   .weekgrid-pro-wrap {
-    max-height: 58dvh;
+    max-height: 68dvh;
     border-radius: 0.65rem;
   }
   .weekgrid-pro-block { padding: 0.35rem; font-size: 0.75rem; }
@@ -940,7 +1137,8 @@ body.weekgrid-fullscreen-active {
 .weekgrid-toolbar {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 0.25rem;
+  padding-top: 0.15rem;
+  margin: 0 0 1rem;
 }
 
 .weekgrid-fullscreen-btn {
@@ -983,7 +1181,7 @@ body.weekgrid-fullscreen-active {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  max-height: none;
+  max-height: none !important;
 }
 
 .weekgrid-fits-viewport .weekgrid-pro,
@@ -1017,10 +1215,12 @@ body.weekgrid-fullscreen-active {
 .weekgrid-fullscreen-overlay {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  z-index: 300;
   display: flex;
   flex-direction: column;
   background: #f1f5f9;
+  /* Por encima del Dialog de Radix (pointer-events: none en siblings del body). */
+  pointer-events: auto !important;
   padding:
     env(safe-area-inset-top, 0)
     env(safe-area-inset-right, 0)
@@ -1071,7 +1271,7 @@ body.weekgrid-fullscreen-active {
 .weekgrid-fullscreen-overlay .weekgrid-pro-wrap {
   flex: 1;
   min-height: 0;
-  max-height: none;
+  max-height: none !important;
   overflow: hidden;
   border-radius: 0.65rem;
 }
@@ -1213,6 +1413,13 @@ html, body { overflow-x: hidden; }
 @media (max-width: 767px) {
   main { overflow-x: hidden; min-width: 0; }
   img, svg, video { max-width: 100%; height: auto; }
+  .auth-menu svg,
+  .auth-menu-dropdown svg,
+  .desktop-nav svg,
+  .bottom-nav svg {
+    max-width: none;
+    height: unset;
+  }
   .page-header,
   .page-description,
   .card,
@@ -1284,12 +1491,14 @@ html, body { overflow-x: hidden; }
   }
 }
 
-/* Diálogo: el scroll lo gestiona el propio calendario */
-.weekgrid-in-dialog .weekgrid-pro-wrap {
-  max-height: min(62dvh, 520px);
+/* Diálogo: el scroll lo gestiona el propio calendario (no aplica en pantalla completa) */
+.weekgrid-in-dialog:not(.weekgrid-fits-viewport):not(.weekgrid-fullscreen-host) .weekgrid-pro-wrap {
+  max-height: min(72dvh, 620px);
 }
 @media (max-width: 767px) {
-  .weekgrid-in-dialog .weekgrid-pro-wrap { max-height: 56dvh; }
+  .weekgrid-in-dialog:not(.weekgrid-fits-viewport):not(.weekgrid-fullscreen-host) .weekgrid-pro-wrap {
+    max-height: 66dvh;
+  }
 }
 
 .weekgrid-pro-block.clickable { cursor: pointer; }
@@ -1382,6 +1591,16 @@ html, body { overflow-x: hidden; }
 }
 .weekgrid-legend-swatch.dashed {
   border-style: dashed;
+}
+.weekgrid-legend-swatch.striped {
+  border-color: #e2e8f0;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(241, 245, 249, 0.95),
+    rgba(241, 245, 249, 0.95) 3px,
+    rgba(148, 163, 184, 0.45) 3px,
+    rgba(148, 163, 184, 0.45) 6px
+  );
 }
 
 .weekgrid-compact .weekgrid-pro-block { font-size: 0.65rem; padding: 0.2rem 0.35rem; }

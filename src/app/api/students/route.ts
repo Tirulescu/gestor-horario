@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
 import { eq, inArray } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
-import { firstAvailabilityBlockedConflict, normalizeRanges } from "@/lib/studentAvailability";
+import { firstAvailabilityBlockedConflict, normalizeBlockedRanges, normalizeRanges } from "@/lib/studentAvailability";
 import {
   requireTeacher,
   assertOwnTeacher,
@@ -64,19 +64,14 @@ export async function PUT(req: NextRequest) {
   const patch: Record<string, unknown> = { name, email };
   if (grade !== undefined) patch.grade = grade;
   if (body.blockedRanges !== undefined) {
-    const arr = Array.isArray(body.blockedRanges) ? body.blockedRanges : [];
-    patch.blockedRanges = arr
-      .map((b: { day?: unknown; start?: unknown; end?: unknown }) => ({
-        day: Number(b.day), start: Number(b.start), end: Number(b.end),
-      }))
-      .filter((b: { day: number; start: number; end: number }) => Number.isFinite(b.day) && Number.isFinite(b.start) && Number.isFinite(b.end) && b.end > b.start);
+    patch.blockedRanges = normalizeBlockedRanges(body.blockedRanges);
   }
   if (body.availableRanges !== undefined) {
     const available = normalizeRanges(body.availableRanges);
     const blocked =
       body.blockedRanges !== undefined
-        ? normalizeRanges(body.blockedRanges)
-        : normalizeRanges(
+        ? normalizeBlockedRanges(body.blockedRanges)
+        : normalizeBlockedRanges(
             (await db.query.students.findFirst({
               where: eq(schema.students.id, id),
               columns: { blockedRanges: true },
