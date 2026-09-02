@@ -1,6 +1,8 @@
 "use client";
 
-import StudentsClient from "@/components/StudentsClient";
+import { clientPage } from "@/lib/clientPage";
+
+const StudentsClient = clientPage(() => import("@/components/StudentsClient"));
 
 export default function StudentsPage() {
   return (

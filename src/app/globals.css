@@ -1987,3 +1987,25 @@ html, body { overflow-x: hidden; }
   scrollbar-width: none;
 }
 .subject-chips-scroll::-webkit-scrollbar { display: none; }
+
+.client-page-boot {
+  min-height: 12rem;
+}
+
+/* ---------- Tarjeta instalar app (perfil) ---------- */
+.install-app-card {
+  border-color: #dbeafe;
+  background: linear-gradient(135deg, #eff6ff 0%, #ffffff 70%);
+  box-shadow: 0 1px 3px rgb(37 99 235 / 0.08);
+}
+.install-app-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 0.85rem;
+  background: #dbeafe;
+  color: var(--accent);
+  flex-shrink: 0;
+}

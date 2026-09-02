@@ -21,14 +21,16 @@ import { persistAvailabilityAdds, replaceAvailabilityPieces } from "@/lib/availa
 import TeacherScheduleManageDialog from "@/components/TeacherScheduleManageDialog";
 import {
   DASHBOARD_ENDPOINTS,
+  fetchApi,
   hasFreshAll,
   invalidate,
   invalidateMany,
   needsRefresh,
+  onCacheStale,
   put,
   warmData,
 } from "@/lib/clientCache";
-import { dashboardBootPending } from "@/lib/pageBoot";
+import { hasDashboardCache } from "@/lib/pageBoot";
 import {
   HOURS_START, HOURS_END,
   type Teacher, type Subject, type TeacherBlock, type Availability,
@@ -49,13 +51,18 @@ function readDashboardCache() {
   const asg = warmData<Assignment[]>("/api/assignments");
   const tb = warmData<TeacherBlock[]>("/api/teacher_blocks");
   const av = warmData<Availability[]>("/api/availabilities");
-  if (!teachers || !subs || !asg || !tb || !av) return null;
+  const sts = warmData<Student[]>("/api/students");
+  const ss = warmData<SubjectStudent[]>("/api/subject_students");
+  if (!teachers || !subs || !asg || !tb || !av || !sts || !ss) return null;
   return {
     teacher: teachers[0] ?? null,
     subjects: subs,
     assignments: asg,
     teacherBlocks: tb,
     availabilities: av,
+    students: sts,
+    subjectStudents: ss,
+    slotRequests: warmData<SlotRequestRow[]>("/api/slot_requests") ?? [],
   };
 }
 
@@ -70,15 +77,7 @@ function getInitialDashboardState() {
     subjectStudents: [] as SubjectStudent[],
     slotRequests: [] as SlotRequestRow[],
   };
-  if (typeof window === "undefined") return empty;
-  const cached = readDashboardCache();
-  if (!cached) return empty;
-  return {
-    ...cached,
-    students: warmData<Student[]>("/api/students") ?? [],
-    subjectStudents: warmData<SubjectStudent[]>("/api/subject_students") ?? [],
-    slotRequests: warmData<SlotRequestRow[]>("/api/slot_requests") ?? [],
-  };
+  return readDashboardCache() ?? empty;
 }
 
 export default function DashboardClient() {
@@ -104,7 +103,7 @@ export default function DashboardClient() {
   const [busy, setBusy] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [loading, setLoading] = useState(dashboardBootPending);
+  const [loading, setLoading] = useState(() => !hasDashboardCache());
 
   const [editAsgDay, setEditAsgDay] = useState("0");
   const [editAsgStart, setEditAsgStart] = useState("");
@@ -118,12 +117,9 @@ export default function DashboardClient() {
     setAssignments(cached.assignments);
     setTeacherBlocks(cached.teacherBlocks);
     setAvailabilities(cached.availabilities);
-    const sts = warmData<Student[]>("/api/students");
-    const ss = warmData<SubjectStudent[]>("/api/subject_students");
-    const sr = warmData<SlotRequestRow[]>("/api/slot_requests");
-    if (sts) setStudents(sts);
-    if (ss) setSubjectStudents(ss);
-    if (sr) setSlotRequests(sr);
+    setStudents(cached.students);
+    setSubjectStudents(cached.subjectStudents);
+    setSlotRequests(cached.slotRequests);
     return true;
   }
 
@@ -138,31 +134,47 @@ export default function DashboardClient() {
 
     try {
       const [teachers, subs, asg, tb, av, sts, ss, sr] = await Promise.all([
-        fetch("/api/teachers").then((r) => r.json()) as Promise<Teacher[]>,
-        fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
-        fetch("/api/assignments").then((r) => r.json()) as Promise<Assignment[]>,
-        fetch("/api/teacher_blocks").then((r) => r.json()) as Promise<TeacherBlock[]>,
-        fetch("/api/availabilities").then((r) => r.json()) as Promise<Availability[]>,
-        fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
-        fetch("/api/subject_students").then((r) => r.json()) as Promise<SubjectStudent[]>,
-        fetch("/api/slot_requests").then((r) => r.json()) as Promise<SlotRequestRow[]>,
+        fetchApi<Teacher[]>("/api/teachers"),
+        fetchApi<Subject[]>("/api/subjects"),
+        fetchApi<Assignment[]>("/api/assignments"),
+        fetchApi<TeacherBlock[]>("/api/teacher_blocks"),
+        fetchApi<Availability[]>("/api/availabilities"),
+        fetchApi<Student[]>("/api/students"),
+        fetchApi<SubjectStudent[]>("/api/subject_students"),
+        fetchApi<SlotRequestRow[]>("/api/slot_requests"),
       ]);
-      setTeacher(teachers[0] ?? null);
-      setSubjects(subs);
-      setAssignments(asg);
-      setTeacherBlocks(tb);
-      setAvailabilities(av);
-      setStudents(sts);
-      setSubjectStudents(ss);
-      setSlotRequests(sr);
-      put("/api/teachers", teachers);
-      put("/api/subjects", subs);
-      put("/api/assignments", asg);
-      put("/api/teacher_blocks", tb);
-      put("/api/availabilities", av);
-      put("/api/students", sts);
-      put("/api/subject_students", ss);
-      put("/api/slot_requests", sr);
+      if (teachers) {
+        setTeacher(teachers[0] ?? null);
+        put("/api/teachers", teachers);
+      }
+      if (subs) {
+        setSubjects(subs);
+        put("/api/subjects", subs);
+      }
+      if (asg) {
+        setAssignments(asg);
+        put("/api/assignments", asg);
+      }
+      if (tb) {
+        setTeacherBlocks(tb);
+        put("/api/teacher_blocks", tb);
+      }
+      if (av) {
+        setAvailabilities(av);
+        put("/api/availabilities", av);
+      }
+      if (sts) {
+        setStudents(sts);
+        put("/api/students", sts);
+      }
+      if (ss) {
+        setSubjectStudents(ss);
+        put("/api/subject_students", ss);
+      }
+      if (sr) {
+        setSlotRequests(sr);
+        put("/api/slot_requests", sr);
+      }
     } finally {
       setLoading(false);
     }
@@ -170,7 +182,7 @@ export default function DashboardClient() {
 
   useLayoutEffect(() => {
     if (hydrateFromCache()) setLoading(false);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { void load(); }, []);
 
@@ -180,11 +192,13 @@ export default function DashboardClient() {
       if (needsRefresh(DASHBOARD_ENDPOINTS)) void load({ force: true });
     };
     const onLockChange = () => { void load({ force: true }); };
+    const offStale = onCacheStale(() => { void load({ force: true }); });
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLockChange);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLockChange);
+      offStale();
     };
   }, []);
 

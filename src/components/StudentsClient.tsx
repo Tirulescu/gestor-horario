@@ -18,7 +18,7 @@ import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import FloatingActionButton from "@/components/FloatingActionButton";
 import { TableCardSkeleton } from "@/components/skeletons";
-import { warmData, put, invalidate, invalidateMany, hasFreshAll, STUDENTS_ENDPOINTS } from "@/lib/clientCache";
+import { warmData, put, invalidate, invalidateMany, hasFreshAll, STUDENTS_ENDPOINTS, fetchApi, onCacheStale } from "@/lib/clientCache";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { fmtDayRange } from "@/lib/hours";
 import StudentScheduleViewDialog from "@/components/StudentScheduleViewDialog";
@@ -60,7 +60,6 @@ function getInitialStudentsState() {
     assignments: [] as Assignment[],
     scheduleLocked: false,
   };
-  if (typeof window === "undefined") return empty;
   const cachedStudents = warmData<Student[]>("/api/students");
   if (cachedStudents === null) return empty;
   const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
@@ -126,28 +125,42 @@ export default function StudentsClient() {
     }
 
     const [st, su, ss, av, tb, asg, teachers] = await Promise.all([
-      fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
-      fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
-      fetch("/api/subject_students").then((r) => r.json()) as Promise<SSRow[]>,
-      fetch("/api/availabilities").then((r) => r.json()) as Promise<Availability[]>,
-      fetch("/api/teacher_blocks").then((r) => r.json()) as Promise<TeacherBlock[]>,
-      fetch("/api/assignments").then((r) => r.json()) as Promise<Assignment[]>,
-      fetch("/api/teachers").then((r) => r.json()) as Promise<{ scheduleFixed?: boolean }[]>,
+      fetchApi<Student[]>("/api/students"),
+      fetchApi<Subject[]>("/api/subjects"),
+      fetchApi<SSRow[]>("/api/subject_students"),
+      fetchApi<Availability[]>("/api/availabilities"),
+      fetchApi<TeacherBlock[]>("/api/teacher_blocks"),
+      fetchApi<Assignment[]>("/api/assignments"),
+      fetchApi<{ scheduleFixed?: boolean }[]>("/api/teachers"),
     ]);
-    setStudents(st);
-    setSubjects(su);
-    setSubjectLinks(ss);
-    setAvailabilities(av);
-    setTeacherBlocks(tb);
-    setAssignments(asg);
-    setScheduleLocked(Boolean(teachers[0]?.scheduleFixed));
-    put("/api/students", st);
-    put("/api/subjects", su);
-    put("/api/subject_students", ss);
-    put("/api/availabilities", av);
-    put("/api/teacher_blocks", tb);
-    put("/api/assignments", asg);
-    put("/api/teachers", teachers);
+    if (st) {
+      setStudents(st);
+      put("/api/students", st);
+    }
+    if (su) {
+      setSubjects(su);
+      put("/api/subjects", su);
+    }
+    if (ss) {
+      setSubjectLinks(ss);
+      put("/api/subject_students", ss);
+    }
+    if (av) {
+      setAvailabilities(av);
+      put("/api/availabilities", av);
+    }
+    if (tb) {
+      setTeacherBlocks(tb);
+      put("/api/teacher_blocks", tb);
+    }
+    if (asg) {
+      setAssignments(asg);
+      put("/api/assignments", asg);
+    }
+    if (teachers) {
+      setScheduleLocked(Boolean(teachers[0]?.scheduleFixed));
+      put("/api/teachers", teachers);
+    }
   }
 
   useLayoutEffect(() => {
@@ -168,8 +181,12 @@ export default function StudentsClient() {
 
   useEffect(() => {
     const onLock = () => { void load({ force: true }); };
+    const offStale = onCacheStale(() => { void load({ force: true }); });
     window.addEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
-    return () => window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
+    return () => {
+      window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
+      offStale();
+    };
   }, []);
 
   const grades = useMemo(

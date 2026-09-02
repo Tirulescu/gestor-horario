@@ -15,7 +15,7 @@ import {
   hasOnboardingCache,
   readOnboardingDataFromCache,
 } from "@/lib/onboardingGuide";
-import { put } from "@/lib/clientCache";
+import { put, fetchApi } from "@/lib/clientCache";
 
 const STEP_ICONS: Record<string, LucideIcon> = {
   subjects: BookOpen,
@@ -27,10 +27,7 @@ const STEP_ICONS: Record<string, LucideIcon> = {
 
 export default function SetupGuidePanel() {
   const [data, setData] = useState(readOnboardingDataFromCache);
-  const [pending, setPending] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return !hasOnboardingCache();
-  });
+  const [pending, setPending] = useState(() => !hasOnboardingCache());
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   async function load() {
@@ -41,31 +38,34 @@ export default function SetupGuidePanel() {
     }
 
     const [subs, sts, av, ss, sr, asg] = await Promise.all([
-      fetch("/api/subjects").then((r) => r.json()) as Promise<{ id: number }[]>,
-      fetch("/api/students").then((r) => r.json()) as Promise<{ id: number }[]>,
-      fetch("/api/availabilities").then((r) => r.json()) as Promise<unknown[]>,
-      fetch("/api/subject_students").then((r) => r.json()) as Promise<
-        { studentId: number; subjectId: number; slotsRequired?: number }[]
-      >,
-      fetch("/api/slot_requests").then((r) => r.json()) as Promise<
-        { studentId: number; subjectId: number }[]
-      >,
-      fetch("/api/assignments").then((r) => r.json()) as Promise<unknown[]>,
+      fetchApi<{ id: number }[]>("/api/subjects"),
+      fetchApi<{ id: number }[]>("/api/students"),
+      fetchApi<unknown[]>("/api/availabilities"),
+      fetchApi<{ studentId: number; subjectId: number; slotsRequired?: number }[]>("/api/subject_students"),
+      fetchApi<{ studentId: number; subjectId: number }[]>("/api/slot_requests"),
+      fetchApi<unknown[]>("/api/assignments"),
     ]);
 
-    put("/api/subjects", subs);
-    put("/api/students", sts);
-    put("/api/availabilities", av);
-    put("/api/subject_students", ss);
-    put("/api/slot_requests", sr);
-    put("/api/assignments", asg);
+    const safeSubs = subs ?? [];
+    const safeSts = sts ?? [];
+    const safeAv = av ?? [];
+    const safeSs = ss ?? [];
+    const safeSr = sr ?? [];
+    const safeAsg = asg ?? [];
+
+    put("/api/subjects", safeSubs);
+    put("/api/students", safeSts);
+    put("/api/availabilities", safeAv);
+    put("/api/subject_students", safeSs);
+    put("/api/slot_requests", safeSr);
+    put("/api/assignments", safeAsg);
 
     setData({
-      subjectsCount: subs.length,
-      studentsCount: sts.length,
-      availabilitiesCount: av.length,
-      incompleteRequests: countIncompleteSlotRequests(ss, sr),
-      assignmentsCount: asg.length,
+      subjectsCount: safeSubs.length,
+      studentsCount: safeSts.length,
+      availabilitiesCount: safeAv.length,
+      incompleteRequests: countIncompleteSlotRequests(safeSs, safeSr),
+      assignmentsCount: safeAsg.length,
     });
     setPending(false);
   }

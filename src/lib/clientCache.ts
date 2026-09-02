@@ -61,6 +61,7 @@ function markStale(key: string) {
   const s = staleKeys();
   s.add(key);
   persistStale(s);
+  notifyCacheStale();
 }
 
 function clearStale(key: string) {
@@ -107,6 +108,7 @@ if (typeof window !== "undefined") {
           }
         } catch {}
       }
+      notifyCacheStale();
       return;
     }
     if (ev.key?.startsWith(LS_PREFIX) && ev.newValue != null) {
@@ -156,7 +158,7 @@ function isApiErrorPayload(data: unknown): data is { error: string } {
   );
 }
 
-/** Cache válida para pintar al instante. Usar en useEffect, no en useState inicial. */
+/** Cache válida para pintar al instante (client-only pages o tras hydrate). */
 export function warmData<T>(key: string): T | null {
   if (staleKeys().has(key)) return null;
   const mem = peek<T>(key);
@@ -210,15 +212,66 @@ export function needsRefresh(
   return now - newest > maxAgeMs;
 }
 
-async function fetchJson(url: string): Promise<{ ok: true; data: unknown } | { ok: false }> {
+export type FetchApiResult =
+  | { ok: true; data: unknown }
+  | { ok: false; status?: number };
+
+/** Fetch JSON de API con validación de error. */
+export async function fetchApiJson(url: string): Promise<FetchApiResult> {
   try {
     const res = await fetch(url, { credentials: "same-origin" });
     const data: unknown = await res.json();
-    if (!res.ok || isApiErrorPayload(data)) return { ok: false };
+    if (!res.ok || isApiErrorPayload(data)) return { ok: false, status: res.status };
     return { ok: true, data };
   } catch {
     return { ok: false };
   }
+}
+
+/** Fetch tipado; en 401 vacía toda la caché (sesión caducada / otro usuario). */
+export async function fetchApi<T>(url: string): Promise<T | null> {
+  const result = await fetchApiJson(url);
+  if (result.ok) return result.data as T;
+  if (result.status === 401) clearAllCache();
+  return null;
+}
+
+const CACHE_STALE_EVENT = "gestor-cache-stale";
+
+function notifyCacheStale() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(CACHE_STALE_EVENT));
+}
+
+/** Vacía memoria, localStorage de caché y flags de warmup. Llamar en signOut. */
+export function clearAllCache() {
+  if (typeof window === "undefined") return;
+  const w = window as unknown as {
+    [KEY]?: CacheShape;
+    [FETCHED_AT_KEY]?: FetchedAtShape;
+    __gestorHorarioWarm?: boolean;
+  };
+  w[KEY] = {};
+  w[FETCHED_AT_KEY] = {};
+  w.__gestorHorarioWarm = false;
+  staleCache = new Set();
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(LS_PREFIX)) toRemove.push(k);
+    }
+    for (const k of toRemove) localStorage.removeItem(k);
+    localStorage.removeItem(STALE_KEY);
+  } catch {}
+  notifyCacheStale();
+}
+
+/** Escucha invalidaciones de caché (misma pestaña o tras clearAllCache). */
+export function onCacheStale(listener: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener(CACHE_STALE_EVENT, listener);
+  return () => window.removeEventListener(CACHE_STALE_EVENT, listener);
 }
 
 /** Fetch + put de un endpoint si falta o force. Devuelve los datos. */
@@ -229,11 +282,12 @@ export async function revalidate<T = unknown>(
   if (!opts.force && hasFresh(url)) {
     return warmData<T>(url);
   }
-  const result = await fetchJson(url);
+  const result = await fetchApiJson(url);
   if (result.ok) {
     put(url, result.data);
     return result.data as T;
   }
+  if (result.status === 401) clearAllCache();
   return warmData<T>(url);
 }
 
@@ -242,7 +296,7 @@ export function prefetchEndpoints(urls: readonly string[]) {
   if (typeof window === "undefined") return;
   for (const url of urls) {
     if (hasFresh(url)) continue;
-    void fetchJson(url).then((result) => {
+    void fetchApiJson(url).then((result) => {
       if (result.ok) put(url, result.data);
     });
   }
@@ -289,7 +343,7 @@ export const STUDENTS_ENDPOINTS = [
   "/api/teachers",
 ] as const;
 
-export const SUBJECTS_ENDPOINTS = ["/api/subjects"] as const;
+export const SUBJECTS_ENDPOINTS = ["/api/subjects", "/api/teachers"] as const;
 
 export const REQUESTS_ENDPOINTS = [
   "/api/subjects",
@@ -299,12 +353,32 @@ export const REQUESTS_ENDPOINTS = [
   "/api/availabilities",
 ] as const;
 
+export function subjectGradeKey(subjectId: number) {
+  return `/api/subject_grade_durations?subjectId=${subjectId}`;
+}
+
+export function subjectDetailEndpoints(subjectId: number) {
+  return [
+    "/api/subjects",
+    "/api/subject_students",
+    "/api/students",
+    "/api/slot_requests",
+    subjectGradeKey(subjectId),
+    "/api/teachers",
+  ] as const;
+}
+
+export function prefetchSubjectDetail(subjectId: number) {
+  prefetchEndpoints(subjectDetailEndpoints(subjectId));
+}
+
 /** Endpoints a prefetch según ruta de navegación. */
 export const ROUTE_PREFETCH: Record<string, readonly string[]> = {
   "/dashboard": DASHBOARD_ENDPOINTS,
   "/students": STUDENTS_ENDPOINTS,
   "/subjects": SUBJECTS_ENDPOINTS,
   "/requests": REQUESTS_ENDPOINTS,
+  "/profile": ["/api/teachers"],
 };
 
 export function prefetchRoute(href: string) {
@@ -324,7 +398,7 @@ export function prefetchAll(opts: { delayMs?: number; skip?: readonly string[] }
     for (const url of WARM_ENDPOINTS) {
       if (skip.has(url)) continue;
       if (warmData(url) !== null) continue;
-      void fetchJson(url).then((result) => {
+      void fetchApiJson(url).then((result) => {
         if (result.ok) put(url, result.data);
       });
     }

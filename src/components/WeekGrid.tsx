@@ -163,10 +163,11 @@ export default function WeekGrid({
   }, [isFullscreen, exitFullscreen, viewBlock]);
 
   useEffect(() => {
-    const active = isFullscreen || (expandMobile && expanded);
-    document.body.classList.toggle("weekgrid-fullscreen-active", active);
+    // Solo bloquear scroll de página en modo pantalla completa explícito.
+    // expandMobile usa sticky: bloquear body dejaba la PWA sin scroll al expandir.
+    document.body.classList.toggle("weekgrid-fullscreen-active", isFullscreen);
     return () => document.body.classList.remove("weekgrid-fullscreen-active");
-  }, [isFullscreen, expandMobile, expanded]);
+  }, [isFullscreen]);
 
   useEffect(() => {
     if (!expandMobile) return;

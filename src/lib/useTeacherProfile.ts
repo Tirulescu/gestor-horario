@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { invalidate, invalidateMany, put, warmData, WARM_ENDPOINTS } from "@/lib/clientCache";
+import {
+  clearAllCache,
+  fetchApi,
+  onCacheStale,
+  put,
+  warmData,
+} from "@/lib/clientCache";
 
 export const SCHEDULE_LOCK_CHANGED_EVENT = "schedule-lock-changed";
 
@@ -18,11 +24,6 @@ function isTeacherArray(data: unknown): data is TeacherProfile[] {
   );
 }
 
-function clearPoisonedTeacherCache() {
-  invalidate("/api/teachers");
-  invalidateMany([...WARM_ENDPOINTS]);
-}
-
 export function useTeacherProfile() {
   const [teacher, setTeacher] = useState<TeacherProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,27 +35,26 @@ export function useTeacherProfile() {
       setTeacher(cached[0]);
       setLoading(false);
     }
-    try {
-      const res = await fetch("/api/teachers", { credentials: "same-origin" });
-      const data: unknown = await res.json();
-      if (!res.ok || !isTeacherArray(data)) {
-        if (res.status === 401) clearPoisonedTeacherCache();
-        setTeacher(null);
-        return;
-      }
-      const t = data[0] ?? null;
-      setTeacher(t);
-      if (data.length > 0) put("/api/teachers", data);
-    } finally {
+    const data = await fetchApi<TeacherProfile[]>("/api/teachers");
+    if (!data || !isTeacherArray(data)) {
+      if (data === null) setTeacher(null);
       setLoading(false);
+      return;
     }
+    setTeacher(data[0] ?? null);
+    if (data.length > 0) put("/api/teachers", data);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
     void load();
     const onChange = () => { void load(); };
     window.addEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onChange);
-    return () => window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onChange);
+    const offStale = onCacheStale(() => { void load(); });
+    return () => {
+      window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onChange);
+      offStale();
+    };
   }, [load]);
 
   const toggleScheduleFixed = useCallback(async (next: boolean): Promise<boolean> => {
@@ -70,12 +70,12 @@ export function useTeacherProfile() {
     setSaving(false);
     if (!res.ok) {
       setTeacher((cur) => (cur ? { ...cur, scheduleFixed: !next } : cur));
+      if (res.status === 401) clearAllCache();
       return false;
     }
     const updated: TeacherProfile = await res.json();
     setTeacher(updated);
     put("/api/teachers", [updated]);
-    invalidate("/api/teachers");
     window.dispatchEvent(new Event(SCHEDULE_LOCK_CHANGED_EVENT));
     return true;
   }, [teacher, saving]);

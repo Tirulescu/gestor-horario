@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
 import { fmtDurationMin, collectSubjectDurationOptions, SESSION_PART_MIN, maxSessionParts, MIN_DURATION_MIN, DURATION_STEP_MIN } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
-import { invalidate, invalidateMany, put, warmData } from "@/lib/clientCache";
+import { fetchApi, invalidate, invalidateMany, onCacheStale, put, subjectGradeKey, warmData } from "@/lib/clientCache";
 import { SubjectDetailSkeleton } from "@/components/skeletons";
 import { COPY } from "@/lib/copy";
 import type { ConfirmTarget, GradeDuration, SlotRequest, Student, Subject, SubjectStudent } from "./types";
@@ -59,7 +59,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [editSlots, setEditSlots] = useState("1");
   const [editSessionParts, setEditSessionParts] = useState<SessionPartsValue>({ split: false, sessionParts: "2" });
 
-  const gradeKey = `/api/subject_grade_durations?subjectId=${id}`;
+  const gradeKey = subjectGradeKey(id);
 
   function readSubjectDetailCache() {
     const allSubjects = warmData<Subject[]>("/api/subjects");
@@ -90,7 +90,6 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       gradeDurations: [] as GradeDuration[],
       teacherScheduleFixed: false,
     };
-    if (typeof window === "undefined") return empty;
     const cached = readSubjectDetailCache();
     if (!cached) return empty;
     return { pending: false, ...cached };
@@ -121,38 +120,48 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     if (hydrateFromCache()) {
       setLoading(false);
       if (warmData<GradeDuration[]>(gradeKey) === null) {
-        try {
-          const gd = await fetch(gradeKey).then((r) => r.json()) as GradeDuration[];
+        const gd = await fetchApi<GradeDuration[]>(gradeKey);
+        if (gd) {
           setGradeDurations(gd);
           put(gradeKey, gd);
-        } catch { /* ignore */ }
+        }
       }
       return;
     }
     try {
       const [allSubjects, ssAll, st, srAll, gd, teachers] = await Promise.all([
-        fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
-        fetch("/api/subject_students").then((r) => r.json()) as Promise<SubjectStudent[]>,
-        fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
-        fetch("/api/slot_requests").then((r) => r.json()) as Promise<SlotRequest[]>,
-        fetch(gradeKey).then((r) => r.json()) as Promise<GradeDuration[]>,
-        fetch("/api/teachers").then((r) => r.json()) as Promise<{ scheduleFixed?: boolean }[]>,
+        fetchApi<Subject[]>("/api/subjects"),
+        fetchApi<SubjectStudent[]>("/api/subject_students"),
+        fetchApi<Student[]>("/api/students"),
+        fetchApi<SlotRequest[]>("/api/slot_requests"),
+        fetchApi<GradeDuration[]>(gradeKey),
+        fetchApi<{ scheduleFixed?: boolean }[]>("/api/teachers"),
       ]);
-      const s = allSubjects.find((x) => x.id === id) ?? null;
-      const ss = ssAll.filter((x) => x.subjectId === id);
-      const sr = srAll.filter((x) => x.subjectId === id);
-      setSubject(s);
-      setMembers(ss);
-      setAllStudents(st);
-      setSlotRequests(sr);
-      setGradeDurations(gd);
-      setTeacherScheduleFixed(Boolean(teachers[0]?.scheduleFixed));
-      put("/api/subjects", allSubjects);
-      put("/api/subject_students", ssAll);
-      put("/api/students", st);
-      put("/api/slot_requests", srAll);
-      put(gradeKey, gd);
-      put("/api/teachers", teachers);
+      if (allSubjects) {
+        const s = allSubjects.find((x) => x.id === id) ?? null;
+        setSubject(s);
+        put("/api/subjects", allSubjects);
+      }
+      if (ssAll) {
+        setMembers(ssAll.filter((x) => x.subjectId === id));
+        put("/api/subject_students", ssAll);
+      }
+      if (st) {
+        setAllStudents(st);
+        put("/api/students", st);
+      }
+      if (srAll) {
+        setSlotRequests(srAll.filter((x) => x.subjectId === id));
+        put("/api/slot_requests", srAll);
+      }
+      if (gd) {
+        setGradeDurations(gd);
+        put(gradeKey, gd);
+      }
+      if (teachers) {
+        setTeacherScheduleFixed(Boolean(teachers[0]?.scheduleFixed));
+        put("/api/teachers", teachers);
+      }
     } finally {
       setLoading(false);
     }
@@ -162,7 +171,12 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     if (hydrateFromCache()) setLoading(false);
   }, [id]);
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { void load(); }, [id]);
+
+  useEffect(() => {
+    const offStale = onCacheStale(() => { void load(); });
+    return offStale;
+  }, [id]);
 
   const requestsByStudent = useMemo(() => {
     const m: Record<number, SlotRequest[]> = {};

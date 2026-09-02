@@ -8,6 +8,7 @@ import { CircleUserRound, LogIn, LogOut, User as UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AuthMenuSkeleton } from "@/components/skeletons";
 import { createClient } from "@/lib/supabase/client";
+import { clearAllCache } from "@/lib/clientCache";
 import { getGoogleDisplayName } from "@/lib/userDisplay";
 import type { User } from "@supabase/supabase-js";
 
@@ -134,6 +135,7 @@ export default function AuthMenu({
 
   async function signOut() {
     setSigningOut(true);
+    clearAllCache();
     const supabase = createClient();
     await supabase.auth.signOut();
     setOpen(false);

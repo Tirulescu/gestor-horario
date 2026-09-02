@@ -64,3 +64,12 @@ export function captureInstallPrompt(event: Event): BeforeInstallPromptEvent {
   window.dispatchEvent(new Event(PWA_INSTALL_AVAILABLE_EVENT));
   return promptEvent;
 }
+
+export async function runInstallPrompt(): Promise<"accepted" | "dismissed" | "unavailable"> {
+  const promptEvent = getDeferredInstallPrompt();
+  if (!promptEvent) return "unavailable";
+  await promptEvent.prompt();
+  const { outcome } = await promptEvent.userChoice;
+  window.__pwaDeferredPrompt = null;
+  return outcome;
+}

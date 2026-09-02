@@ -24,8 +24,8 @@ import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import { ChipGroupSkeleton, MemberCardSkeleton } from "@/components/skeletons";
-import { warmData, put, invalidate, hasFresh, hasFreshAll } from "@/lib/clientCache";
-import { subjectsBootPending } from "@/lib/pageBoot";
+import { warmData, put, invalidate, hasFresh, hasFreshAll, fetchApi, onCacheStale } from "@/lib/clientCache";
+import { hasRequestsCache } from "@/lib/pageBoot";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { DAYS } from "@/lib/validate";
 import { fmtRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, fmtDurationMin, resolveMemberDurationMin, fmtSubjectDurationOptions, slotDurationMin } from "@/lib/hours";
@@ -93,7 +93,7 @@ export default function RequestsClient() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loadingSubject, setLoadingSubject] = useState(() => !boot.subjectDataReady && boot.activeSubjectId !== null);
-  const [loadingSubjects, setLoadingSubjects] = useState(subjectsBootPending);
+  const [loadingSubjects, setLoadingSubjects] = useState(() => !hasRequestsCache() && boot.subjects.length === 0);
   const [scheduleLocked, setScheduleLocked] = useState(boot.scheduleLocked);
 
   // Add-solicitud dialog state
@@ -189,14 +189,18 @@ export default function RequestsClient() {
 
     try {
       const [subs, teachers] = await Promise.all([
-        fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
-        fetch("/api/teachers").then((r) => r.json()) as Promise<{ scheduleFixed?: boolean }[]>,
+        fetchApi<Subject[]>("/api/subjects"),
+        fetchApi<{ scheduleFixed?: boolean }[]>("/api/teachers"),
       ]);
-      setSubjects(subs);
-      setScheduleLocked(Boolean(teachers[0]?.scheduleFixed));
-      put("/api/subjects", subs);
-      put("/api/teachers", teachers);
-      if (subs.length > 0 && activeSubjectId === null) setActiveSubjectId(subs[0].id);
+      if (subs) {
+        setSubjects(subs);
+        put("/api/subjects", subs);
+        if (subs.length > 0 && activeSubjectId === null) setActiveSubjectId(subs[0].id);
+      }
+      if (teachers) {
+        setScheduleLocked(Boolean(teachers[0]?.scheduleFixed));
+        put("/api/teachers", teachers);
+      }
     } finally {
       setLoadingSubjects(false);
     }
@@ -233,19 +237,27 @@ export default function RequestsClient() {
 
     try {
       const [ssAll, srAll, st, av] = await Promise.all([
-        fetch("/api/subject_students").then((r) => r.json()) as Promise<SubjectStudent[]>,
-        fetch("/api/slot_requests").then((r) => r.json()) as Promise<SlotRequest[]>,
-        fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
-        sub ? fetch("/api/availabilities").then((r) => r.json()) as Promise<Availability[]> : Promise.resolve([] as Availability[]),
+        fetchApi<SubjectStudent[]>("/api/subject_students"),
+        fetchApi<SlotRequest[]>("/api/slot_requests"),
+        fetchApi<Student[]>("/api/students"),
+        sub ? fetchApi<Availability[]>("/api/availabilities") : Promise.resolve(null),
       ]);
-      setMembers(ssAll.filter((x) => x.subjectId === subjectId));
-      setSlotRequests(srAll.filter((x) => x.subjectId === subjectId));
-      setAllStudents(st);
-      setAvailabilities(av);
-      put("/api/subject_students", ssAll);
-      put("/api/slot_requests", srAll);
-      put("/api/students", st);
-      if (sub) put("/api/availabilities", av);
+      if (ssAll) {
+        setMembers(ssAll.filter((x) => x.subjectId === subjectId));
+        put("/api/subject_students", ssAll);
+      }
+      if (srAll) {
+        setSlotRequests(srAll.filter((x) => x.subjectId === subjectId));
+        put("/api/slot_requests", srAll);
+      }
+      if (st) {
+        setAllStudents(st);
+        put("/api/students", st);
+      }
+      if (av) {
+        setAvailabilities(av);
+        put("/api/availabilities", av);
+      }
     } finally {
       if (!silent) setLoadingSubject(false);
     }
@@ -259,7 +271,8 @@ export default function RequestsClient() {
     }
     const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
     if (cachedTeachers) setScheduleLocked(Boolean(cachedTeachers[0]?.scheduleFixed));
-  }, []);
+    if (boot.subjectDataReady) setLoadingSubject(false);
+  }, [boot.subjectDataReady]);
 
   useEffect(() => {
     void loadSubjects();
@@ -268,9 +281,16 @@ export default function RequestsClient() {
 
   useEffect(() => {
     const onLock = () => { void loadSubjects({ force: true }); };
+    const offStale = onCacheStale(() => {
+      void loadSubjects({ force: true });
+      if (activeSubjectId !== null) void loadSubjectData(activeSubjectId, { force: true, silent: true });
+    });
     window.addEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
-    return () => window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
-  }, []);
+    return () => {
+      window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
+      offStale();
+    };
+  }, [activeSubjectId]);
 
   const requestsByStudent = useMemo(() => {
     const m: Record<number, SlotRequest[]> = {};

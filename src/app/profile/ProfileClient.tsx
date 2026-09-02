@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/Toast";
 import SetupGuidePanel from "@/components/SetupGuidePanel";
-import { warmData, put } from "@/lib/clientCache";
+import InstallAppCard from "@/components/InstallAppCard";
+import { warmData, put, fetchApi } from "@/lib/clientCache";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 
 interface Teacher {
@@ -19,16 +20,15 @@ interface Teacher {
   scheduleFixed: boolean;
 }
 
-function getInitialTeacher(): Teacher | null {
-  if (typeof window === "undefined") return null;
+function readTeacherFromCache(): Teacher | null {
   const cached = warmData<Teacher[]>("/api/teachers");
   return cached?.[0] ?? null;
 }
 
 export default function ProfileClient() {
   const toast = useToast();
-  const [teacher, setTeacher] = useState(getInitialTeacher);
-  const [profilePending, setProfilePending] = useState(() => getInitialTeacher() === null);
+  const [teacher, setTeacher] = useState<Teacher | null>(readTeacherFromCache);
+  const [profilePending, setProfilePending] = useState(() => readTeacherFromCache() === null);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -38,10 +38,10 @@ export default function ProfileClient() {
       setProfilePending(false);
     }
     try {
-      const arr = await fetch("/api/teachers").then((r) => r.json()) as Teacher[];
-      const t = arr[0] ?? null;
+      const arr = await fetchApi<Teacher[]>("/api/teachers");
+      const t = arr?.[0] ?? null;
       setTeacher(t);
-      if (arr.length > 0) put("/api/teachers", arr);
+      if (arr && arr.length > 0) put("/api/teachers", arr);
     } finally {
       setProfilePending(false);
     }
@@ -77,6 +77,8 @@ export default function ProfileClient() {
         title="Mi perfil"
         description="Cuenta y preferencias de horario."
       />
+
+      <InstallAppCard />
 
       <SetupGuidePanel />
 
