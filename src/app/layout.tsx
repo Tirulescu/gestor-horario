@@ -6,8 +6,8 @@ import AppShell from "@/components/AppShell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Gestor de horario",
-  description: "Gestor de horario para clases y tutorías",
+  title: "Gestor horario",
+  description: "Gestor horario para clases y tutorías",
 };
 
 export const viewport: Viewport = {

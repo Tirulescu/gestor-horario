@@ -28,15 +28,44 @@ export function CardSkeleton({
 }
 
 export function TableCardSkeleton({ rows = 4 }: { rows?: number }) {
+  return <EntityListSkeleton count={rows} />;
+}
+
+export function EntityListSkeleton({ count = 4 }: { count?: number }) {
   return (
-    <Card className="p-5 overflow-x-auto" aria-busy="true">
-      <div className="space-y-3">
-        <Skeleton className="h-5 w-full max-w-md" />
-        {Array.from({ length: rows }).map((_, i) => (
-          <Skeleton key={i} className="h-10 w-full rounded-lg" />
-        ))}
-      </div>
-    </Card>
+    <div className="entity-list" aria-busy="true">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="entity-card">
+          <div className="entity-card-header">
+            <div className="space-y-2 flex-1 min-w-0">
+              <Skeleton className="h-5 w-2/3 max-w-[12rem]" />
+              <Skeleton className="h-5 w-20 rounded-full" />
+            </div>
+            <div className="flex gap-1.5">
+              <Skeleton className="h-9 w-9 rounded-lg" />
+              <Skeleton className="h-9 w-9 rounded-lg" />
+            </div>
+          </div>
+          <div className="space-y-3 pt-1">
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-24" />
+              <div className="flex flex-wrap gap-1.5">
+                <Skeleton className="h-6 w-16 rounded-full" />
+                <Skeleton className="h-6 w-20 rounded-full" />
+                <Skeleton className="h-6 w-14 rounded-full" />
+              </div>
+            </div>
+            <div className="space-y-2 pt-2 border-t border-gray-100">
+              <Skeleton className="h-3 w-28" />
+              <div className="flex flex-wrap gap-1.5">
+                <Skeleton className="h-6 w-24 rounded-full" />
+                <Skeleton className="h-6 w-20 rounded-full" />
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

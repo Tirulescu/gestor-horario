@@ -14,30 +14,17 @@ interface ModalProps {
 
 export default function Modal({ open, onClose, title, children, footer, size = "md" }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
-  const firstFieldRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) {
       d.showModal();
+      // Focus the dialog itself, not the first input (avoids mobile keyboard).
+      d.focus();
     } else if (!open && d.open) {
       d.close();
     }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const d = ref.current;
-    if (!d) return;
-    const t = setTimeout(() => {
-      const focusable = d.querySelector<HTMLElement>("input, select, textarea, button");
-      if (focusable) {
-        focusable.focus();
-        firstFieldRef.current = focusable;
-      }
-    }, 30);
-    return () => clearTimeout(t);
   }, [open]);
 
   function handleClose() {

@@ -1,7 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
   teachers, students, teacherStudents,
-  subjects, subjectStudents, availabilities, slotRequests, assignments,
+  subjects, subjectStudents, subjectGradeDurations, availabilities, slotRequests, assignments,
 } from "./schema";
 
 export const teachersRelations = relations(teachers, ({ many }) => ({
@@ -26,8 +26,13 @@ export const teacherStudentsRelations = relations(teacherStudents, ({ one }) => 
 export const subjectsRelations = relations(subjects, ({ one, many }) => ({
   teacher: one(teachers, { fields: [subjects.teacherId], references: [teachers.id] }),
   subjectStudents: many(subjectStudents),
+  subjectGradeDurations: many(subjectGradeDurations),
   slotRequests: many(slotRequests),
   assignments: many(assignments),
+}));
+
+export const subjectGradeDurationsRelations = relations(subjectGradeDurations, ({ one }) => ({
+  subject: one(subjects, { fields: [subjectGradeDurations.subjectId], references: [subjects.id] }),
 }));
 
 export const subjectStudentsRelations = relations(subjectStudents, ({ one }) => ({

@@ -21,24 +21,26 @@ export async function GET(req: NextRequest) {
   const subjectIds = await getSubjectIdsForTeacher(auth.teacher.id);
   if (subjectIds.length === 0) return Response.json([]);
 
-  let rows = await db.query.subjectStudents.findMany({
-    where: inArray(schema.subjectStudents.subjectId, subjectIds),
-    with: { student: true, subject: true },
-    orderBy: (ss, { asc }) => [asc(ss.priority), asc(ss.id)],
-  });
+  const conditions = [inArray(schema.subjectStudents.subjectId, subjectIds)];
 
   if (subjectId) {
     const sid = Number(subjectId);
     const denied = await assertSubjectOwned(sid, auth.teacher.id);
     if (denied) return denied;
-    rows = rows.filter((r) => r.subjectId === sid);
+    conditions.push(eq(schema.subjectStudents.subjectId, sid));
   }
   if (studentId) {
     const stid = Number(studentId);
     const denied = await assertStudentAccessible(stid, auth.teacher.id);
     if (denied) return denied;
-    rows = rows.filter((r) => r.studentId === stid);
+    conditions.push(eq(schema.subjectStudents.studentId, stid));
   }
+
+  const rows = await db.query.subjectStudents.findMany({
+    where: and(...conditions),
+    with: { student: true, subject: true },
+    orderBy: (ss, { asc }) => [asc(ss.priority), asc(ss.id)],
+  });
   return Response.json(rows);
 }
 
@@ -65,8 +67,22 @@ export async function POST(req: NextRequest) {
   });
   if (exists) return apiError("El alumno ya está en la asignatura", 409);
 
-  const durationMin = body.durationMin != null ? Number(body.durationMin) : null;
-  const slotsRequired = Number(body.slotsRequired ?? 1);
+  let durationMin = body.durationMin != null ? Number(body.durationMin) : null;
+  let slotsRequired = Number(body.slotsRequired ?? 1);
+
+  // Si no se indica duración, aplicar regla del curso del alumno (si existe).
+  if (durationMin == null && student.grade) {
+    const gradeRule = await db.query.subjectGradeDurations.findFirst({
+      where: and(
+        eq(schema.subjectGradeDurations.subjectId, subjectId),
+        eq(schema.subjectGradeDurations.grade, student.grade.trim()),
+      ),
+    });
+    if (gradeRule) {
+      durationMin = gradeRule.durationMin;
+      if (body.slotsRequired == null) slotsRequired = gradeRule.slotsRequired;
+    }
+  }
   let priority = body.priority != null ? Number(body.priority) : null;
   if (priority == null) {
     const siblings = await db.query.subjectStudents.findMany({

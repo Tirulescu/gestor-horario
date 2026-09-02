@@ -70,6 +70,20 @@ export const subjectStudents = pgTable(
   (t) => [uniqueIndex("subject_students_subject_student_uniq").on(t.subjectId, t.studentId)]
 );
 
+/** Duración de una asignatura para todos los alumnos de un curso (grade). */
+export const subjectGradeDurations = pgTable(
+  "subject_grade_durations",
+  {
+    id: serial("id").primaryKey(),
+    subjectId: integer("subject_id").notNull().references(() => subjects.id, { onDelete: "cascade" }),
+    grade: text("grade").notNull(),
+    durationMin: integer("duration_min").notNull(),
+    slotsRequired: integer("slots_required").notNull().default(1),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("subject_grade_durations_subject_grade_uniq").on(t.subjectId, t.grade)]
+);
+
 export const availabilities = pgTable("availabilities", {
   id: serial("id").primaryKey(),
   teacherId: integer("teacher_id").notNull().references(() => teachers.id, { onDelete: "cascade" }),

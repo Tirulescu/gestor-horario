@@ -4,9 +4,11 @@ import { slotWithinAvailable } from "../src/lib/studentAvailability";
 import {
   findBestCollectiveSlot,
   prefScoreForSlot,
+  PREF_AVAILABLE,
+  PREF_NO_MATCH,
   type CollectiveMember,
-  type Interval,
 } from "../src/lib/collectiveSchedule";
+import type { Interval } from "../src/lib/scheduleIntervals";
 
 function makeCanAttend(
   availableByStudent: Record<number, { day: number; start: number; end: number }[]>,
@@ -95,8 +97,8 @@ console.log("✓ respeta duración exacta de 45 min");
 {
   const requests = [{ dayOfWeek: 0, startHour: 8, endHour: 9, prefOrder: 1 }];
   const available = [{ day: 0, start: 10, end: 14 }];
-  assert.equal(prefScoreForSlot(requests, 0, 10, 11.5, available), 0);
-  assert.equal(prefScoreForSlot(requests, 0, 15, 16.5, available), 100);
+  assert.equal(prefScoreForSlot(requests, 0, 10, 11.5, available), PREF_AVAILABLE);
+  assert.equal(prefScoreForSlot(requests, 0, 15, 16.5, available), PREF_NO_MATCH);
   console.log("✓ usa disponibilidad del alumno cuando no hay solicitud que encaje");
 }
 
@@ -129,6 +131,81 @@ console.log("✓ respeta duración exacta de 45 min");
   assert.equal(result.slot?.start, 10);
   assert.equal(result.slot?.end, 11.5);
   console.log("✓ colectiva elige hueco dentro de la disponibilidad compartida");
+}
+
+// Ante todo: el hueco donde caben más alumnos, aunque el de prioridad 1 no pueda
+{
+  const members: CollectiveMember[] = [
+    member(1, 1),
+    member(2, 5),
+    member(3, 5),
+    member(4, 5),
+  ];
+  const teacherFree: Record<number, Interval[]> = { 0: [{ start: 9, end: 18 }] };
+  const canAttend = makeCanAttend({
+    1: [{ day: 0, start: 15, end: 18 }],
+    2: [{ day: 0, start: 10, end: 14 }],
+    3: [{ day: 0, start: 10, end: 14 }],
+    4: [{ day: 0, start: 10, end: 14 }],
+  });
+
+  const result = findBestCollectiveSlot(members, 90, teacherFree, canAttend);
+  assert.equal(result.fitting.length, 3, "debe elegir el hueco con 3 alumnos, no el de prioridad 1 solo");
+  assert.equal(result.slot?.start, 10);
+  console.log("✓ colectiva prioriza el mayor número de alumnos disponibles");
+}
+
+// A igualdad de asistencia, gana el hueco que cubre mejor a los de mayor prioridad
+{
+  const members: CollectiveMember[] = [
+    member(1, 1),
+    member(2, 2),
+    member(3, 5),
+    member(4, 5),
+  ];
+  const teacherFree: Record<number, Interval[]> = { 0: [{ start: 9, end: 18 }] };
+  const canAttend = makeCanAttend({
+    1: [{ day: 0, start: 10, end: 12 }],
+    2: [{ day: 0, start: 10, end: 12 }],
+    3: [{ day: 0, start: 15, end: 18 }],
+    4: [{ day: 0, start: 15, end: 18 }],
+  });
+
+  const result = findBestCollectiveSlot(members, 90, teacherFree, canAttend);
+  assert.equal(result.fitting.length, 2);
+  assert.equal(result.slot?.start, 10);
+  assert.ok(result.fitting.some((m) => m.studentId === 1));
+  console.log("✓ a igualdad de alumnos, prefiere el hueco con mayor prioridad");
+}
+
+// A igualdad de asistencia y prioridad, gana el que mejor casa con solicitudes
+{
+  const members: CollectiveMember[] = [
+    {
+      studentId: 1,
+      studentName: "A1",
+      priority: 1,
+      requests: [{ dayOfWeek: 0, startHour: 15, endHour: 17, prefOrder: 1 }],
+      availableRanges: [{ day: 0, start: 10, end: 18 }],
+    },
+    {
+      studentId: 2,
+      studentName: "A2",
+      priority: 1,
+      requests: [{ dayOfWeek: 0, startHour: 15, endHour: 17, prefOrder: 1 }],
+      availableRanges: [{ day: 0, start: 10, end: 18 }],
+    },
+  ];
+  const teacherFree: Record<number, Interval[]> = { 0: [{ start: 10, end: 18 }] };
+  const canAttend = makeCanAttend({
+    1: [{ day: 0, start: 10, end: 18 }],
+    2: [{ day: 0, start: 10, end: 18 }],
+  });
+
+  const result = findBestCollectiveSlot(members, 90, teacherFree, canAttend);
+  assert.equal(result.fitting.length, 2);
+  assert.equal(result.slot?.start, 15);
+  console.log("✓ a igualdad de alumnos y prioridad, prefiere el hueco de las solicitudes");
 }
 
 console.log("\nTodos los tests de duración y asignaturas colectivas pasaron.");

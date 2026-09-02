@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/Toast";
 import { CardSkeleton } from "@/components/skeletons";
-import { invalidate } from "@/lib/clientCache";
+import { warmData, put } from "@/lib/clientCache";
 
 interface Teacher {
   id: number;
@@ -21,11 +21,20 @@ interface Teacher {
 export default function ProfileClient() {
   const toast = useToast();
   const [teacher, setTeacher] = useState<Teacher | null>(null);
+  const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
 
   async function load() {
-    const t = await fetch("/api/teachers").then((r) => r.json()).then((arr: Teacher[]) => arr[0] ?? null);
+    const cached = warmData<Teacher[]>("/api/teachers");
+    if (cached) {
+      setTeacher(cached[0] ?? null);
+      setReady(true);
+    }
+    const arr = await fetch("/api/teachers").then((r) => r.json()) as Teacher[];
+    const t = arr[0] ?? null;
     setTeacher(t);
+    if (arr.length > 0) put("/api/teachers", arr);
+    setReady(true);
   }
 
   useEffect(() => { load(); }, []);
@@ -46,8 +55,22 @@ export default function ProfileClient() {
     }
     const updated: Teacher = await res.json();
     setTeacher(updated);
-    invalidate("/api/teachers");
+    put("/api/teachers", [updated]);
     toast("success", next ? "Horario fijado" : "Auto-agendar habilitado");
+  }
+
+  if (!ready) {
+    return (
+      <div className="max-w-2xl space-y-5">
+        <PageHeader
+          icon={User}
+          title="Mi perfil"
+          description="Datos de tu cuenta y preferencias de horario."
+        />
+        <CardSkeleton rows={2} />
+        <CardSkeleton rows={2} />
+      </div>
+    );
   }
 
   if (!teacher) {
@@ -58,8 +81,7 @@ export default function ProfileClient() {
           title="Mi perfil"
           description="Datos de tu cuenta y preferencias de horario."
         />
-        <CardSkeleton rows={2} />
-        <CardSkeleton rows={2} />
+        <Card className="p-5 text-sm text-gray-500">No se pudo cargar el perfil.</Card>
       </div>
     );
   }
@@ -98,7 +120,7 @@ export default function ProfileClient() {
               {teacher.scheduleFixed && <Badge variant="warn">Activo</Badge>}
             </div>
             <p id="schedule-fixed-desc" className="text-sm text-gray-500 leading-relaxed">
-              Impide que el auto-agendado modifique tu horario. Las clases manuales y reservas siguen editables.
+              Impide que el auto-agendado modifique tu horario. Los eventos siguen siendo editables manualmente.
             </p>
           </div>
           <Switch

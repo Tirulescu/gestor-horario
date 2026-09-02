@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
 
   const rows = await db.query.subjects.findMany({
     where: eq(schema.subjects.teacherId, teacherId),
-    with: { teacher: true, subjectStudents: true },
+    with: { subjectStudents: true, subjectGradeDurations: true },
     orderBy: (s, { asc }) => [asc(s.id)],
   });
   return Response.json(rows);
@@ -84,7 +84,12 @@ export async function PATCH(req: NextRequest) {
   if (deniedSubject) return deniedSubject;
 
   const patch: Partial<{ scheduleFixed: boolean; isCollective: boolean }> = {};
-  if (body.scheduleFixed !== undefined) patch.scheduleFixed = Boolean(body.scheduleFixed);
+  if (body.scheduleFixed !== undefined) {
+    if (auth.teacher.scheduleFixed) {
+      return apiError("El horario ya está fijado en tu perfil; no hace falta fijarlo por asignatura", 403);
+    }
+    patch.scheduleFixed = Boolean(body.scheduleFixed);
+  }
   if (body.isCollective !== undefined) patch.isCollective = Boolean(body.isCollective);
   if (Object.keys(patch).length === 0) return apiError("Nada que actualizar");
 

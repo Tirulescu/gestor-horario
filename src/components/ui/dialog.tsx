@@ -39,6 +39,7 @@ function DialogContent({
   className,
   children,
   size = "md",
+  onOpenAutoFocus,
   ...props
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize }) {
   return (
@@ -46,15 +47,24 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         asChild
+        onOpenAutoFocus={(e) => {
+          onOpenAutoFocus?.(e);
+          if (e.defaultPrevented) return;
+          // Keep focus in the dialog without selecting the first input/button
+          // (avoids opening the mobile keyboard on form dialogs).
+          e.preventDefault();
+          (e.currentTarget as HTMLElement).focus({ preventScroll: true });
+        }}
         {...props}
       >
         <motion.div
+          tabIndex={-1}
           initial={{ opacity: 0, scale: 0.97, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.98, y: 8 }}
           transition={{ type: "spring", stiffness: 320, damping: 30, duration: 0.2 }}
           className={cn(
-            "fixed inset-0 z-50 m-auto flex h-fit max-h-[85dvh] min-h-0 flex-col overflow-y-auto rounded-2xl bg-white p-5 shadow-[0_20px_50px_0_rgb(0_0_0/0.25)]",
+            "fixed inset-0 z-50 m-auto flex h-fit max-h-[85dvh] min-h-0 flex-col overflow-y-auto rounded-2xl bg-white p-5 shadow-[0_20px_50px_0_rgb(0_0_0/0.25)] outline-none",
             dialogSizeClasses[size],
             className
           )}

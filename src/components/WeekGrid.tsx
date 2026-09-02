@@ -4,7 +4,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronUp, Maximize2, Minimize2 } from "lucide-react";
 import { DAYS } from "@/lib/validate";
-import { fmtHour } from "@/lib/hours";
+import { fmtHour, fmtDayRange } from "@/lib/hours";
+import CalendarEventDetailDialog, { type CalendarEventDetailRow } from "@/components/CalendarEventDetailDialog";
+
+const MIN_FIT_HOUR_HEIGHT = 10;
+
+function zoneHours(zones?: Record<number, { start: number; end: number }[]>): number[] {
+  if (!zones) return [];
+  const out: number[] = [];
+  for (const ranges of Object.values(zones)) {
+    for (const r of ranges) out.push(r.start, r.end);
+  }
+  return out;
+}
+
+function computeFullRange(
+  startH: number,
+  endH: number,
+  contentHours: number[],
+): { lo: number; hi: number } {
+  let lo = startH;
+  let hi = endH;
+  if (contentHours.length > 0) {
+    lo = Math.min(lo, Math.floor(Math.min(...contentHours)));
+    hi = Math.max(hi, Math.ceil(Math.max(...contentHours)));
+  }
+  return { lo, hi };
+}
 
 export interface WeekBlock {
   id: number;
@@ -14,6 +40,8 @@ export interface WeekBlock {
   title: string;
   subtitle?: string;
   color: string;
+  detailTitle?: string;
+  details?: CalendarEventDetailRow[];
 }
 
 interface WeekGridProps {
@@ -63,11 +91,19 @@ export default function WeekGrid({
   inDialog = false,
 }: WeekGridProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const headerScrollRef = useRef<HTMLDivElement>(null);
+  const bodyScrollRef = useRef<HTMLDivElement>(null);
+  const syncingScrollRef = useRef(false);
+  const expandMobileRef = useRef<HTMLDivElement>(null);
   const fullscreenBodyRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fitHourHeight, setFitHourHeight] = useState(hourHeight);
   const [mounted, setMounted] = useState(false);
+  const [viewBlock, setViewBlock] = useState<WeekBlock | null>(null);
+
+  const shouldFitViewport = isFullscreen || (expandMobile && expanded);
 
   useEffect(() => setMounted(true), []);
 
@@ -105,23 +141,31 @@ export default function WeekGrid({
 
   const totalHoursRef = useRef(0);
 
-  const colTemplate = isFullscreen
+  const colTemplate = shouldFitViewport
     ? `var(--weekgrid-gutter, 52px) repeat(7, 1fr)`
     : `var(--weekgrid-gutter, 52px) repeat(7, minmax(var(--weekgrid-col-min, 128px), 1fr))`;
-  const allHours = useMemo(
-    () => [...blocks.map((b) => b.startHour), ...blocks.map((b) => b.endHour)],
-    [blocks]
-  );
-  const lo = Math.min(startH, ...allHours.filter((h) => Number.isFinite(h)), startH);
-  const hi = Math.max(endH, ...allHours.filter((h) => Number.isFinite(h)), endH);
-  const totalHours = hi - lo;
-  totalHoursRef.current = totalHours;
-
-  const effectiveHourHeight = isFullscreen ? fitHourHeight : hourHeight;
+  const contentHours = useMemo(() => {
+    const hours = [
+      ...blocks.flatMap((b) => [b.startHour, b.endHour]),
+      ...zoneHours(unavailable),
+      ...zoneHours(availableZones),
+      ...zoneHours(blockedZones),
+    ];
+    return hours.filter((h) => Number.isFinite(h));
+  }, [blocks, unavailable, availableZones, blockedZones]);
 
   const todayIdx = (new Date().getDay() + 6) % 7;
   const now = new Date();
   const nowHour = now.getHours() + now.getMinutes() / 60;
+
+  const { lo, hi } = useMemo(
+    () => computeFullRange(startH, endH, contentHours),
+    [startH, endH, contentHours],
+  );
+  const totalHours = hi - lo;
+  totalHoursRef.current = totalHours;
+
+  const effectiveHourHeight = shouldFitViewport ? fitHourHeight : hourHeight;
   const showNowLine = nowHour >= lo && nowHour < hi;
 
   const hours: number[] = [];
@@ -163,60 +207,139 @@ export default function WeekGrid({
   const legendItems = legend ?? defaultLegend;
 
   useEffect(() => {
-    if (!isFullscreen) {
+    if (!shouldFitViewport) {
       setFitHourHeight(hourHeight);
       return;
     }
-    const body = fullscreenBodyRef.current;
-    if (!body) return;
+    const container = isFullscreen ? fullscreenBodyRef.current : expandMobileRef.current;
+    if (!container) return;
 
     const update = () => {
-      const header = body.querySelector<HTMLElement>(".weekgrid-pro-header");
-      const legendEl = body.querySelector<HTMLElement>(".weekgrid-legend");
-      const toolbar = body.closest<HTMLElement>(".weekgrid-fullscreen-overlay")?.querySelector<HTMLElement>(".weekgrid-fullscreen-toolbar");
-      const headerH = header?.offsetHeight ?? 40;
-      const legendH = legendEl?.offsetHeight ?? 0;
-      const toolbarH = toolbar?.offsetHeight ?? 48;
-      const padding = 16;
-      const available = window.innerHeight - toolbarH - legendH - headerH - padding;
-      setFitHourHeight(Math.max(20, Math.floor(available / totalHoursRef.current)));
+      const wrap = container.querySelector<HTMLElement>(".weekgrid-pro-wrap");
+      const header = container.querySelector<HTMLElement>(".weekgrid-pro-header");
+      const bodyScroll = container.querySelector<HTMLElement>(".weekgrid-pro-body-scroll");
+      const body = container.querySelector<HTMLElement>(".weekgrid-pro-body");
+      if (!wrap || totalHoursRef.current <= 0) return;
+
+      let bodySpace = bodyScroll?.clientHeight
+        || (wrap.clientHeight - (header?.offsetHeight ?? 0));
+      if (body) {
+        const bodyStyles = getComputedStyle(body);
+        bodySpace -= (parseFloat(bodyStyles.marginTop) || 0) + (parseFloat(bodyStyles.marginBottom) || 0);
+      }
+      if (bodySpace <= 0) return;
+
+      setFitHourHeight(Math.max(MIN_FIT_HOUR_HEIGHT, bodySpace / totalHoursRef.current));
     };
 
     const ro = new ResizeObserver(update);
-    ro.observe(body);
+    const wrap = container.querySelector<HTMLElement>(".weekgrid-pro-wrap");
+    if (wrap) ro.observe(wrap);
+    ro.observe(container);
     window.addEventListener("resize", update);
-    update();
+    requestAnimationFrame(update);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [isFullscreen, hourHeight, showLegend, legendItems.length]);
+  }, [shouldFitViewport, isFullscreen, expanded, expandMobile, hourHeight, lo, hi, showLegend, legendItems.length]);
+
+  useEffect(() => {
+    if (shouldFitViewport) return;
+    const body = bodyScrollRef.current;
+    if (!body) return;
+
+    const scrollHour = showNowLine
+      ? nowHour
+      : contentHours.length > 0
+        ? Math.min(...contentHours)
+        : lo;
+
+    const raf = requestAnimationFrame(() => {
+      const pixelTop = (scrollHour - lo) * effectiveHourHeight;
+      body.scrollTop = Math.max(0, pixelTop - body.clientHeight * 0.2);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [lo, hi, effectiveHourHeight, showNowLine, nowHour, contentHours, shouldFitViewport]);
+
+  const handleBlockClick = useCallback(
+    (block: WeekBlock) => {
+      if (shouldFitViewport) {
+        setViewBlock(block);
+        return;
+      }
+      onBlockClick?.(block);
+    },
+    [shouldFitViewport, onBlockClick],
+  );
+
+  const viewDialogRows: CalendarEventDetailRow[] = viewBlock
+    ? (viewBlock.details ?? [
+        { label: "Horario", value: fmtDayRange(viewBlock.dayOfWeek, viewBlock.startHour, viewBlock.endHour) },
+      ])
+    : [];
+
+  const handleHeaderScroll = useCallback(() => {
+    if (syncingScrollRef.current) return;
+    const header = headerScrollRef.current;
+    const body = bodyScrollRef.current;
+    if (!header || !body) return;
+    syncingScrollRef.current = true;
+    body.scrollLeft = header.scrollLeft;
+    syncingScrollRef.current = false;
+  }, []);
+
+  const handleBodyScroll = useCallback(() => {
+    if (syncingScrollRef.current) return;
+    const header = headerScrollRef.current;
+    const body = bodyScrollRef.current;
+    if (!header || !body) return;
+    syncingScrollRef.current = true;
+    header.scrollLeft = body.scrollLeft;
+    syncingScrollRef.current = false;
+  }, []);
+
+  const gridMinWidth = shouldFitViewport
+    ? undefined
+    : `calc(var(--weekgrid-gutter) + 7 * var(--weekgrid-col-min))`;
 
   const gridContent = (
-    <div className="weekgrid-inner space-y-3">
-      <div className="card weekgrid-pro-wrap p-0 overflow-hidden">
-        <div className="weekgrid-pro" style={{ position: "relative" }}>
+    <div className={"weekgrid-inner" + (shouldFitViewport ? " weekgrid-inner-fit" : " space-y-3")}>
+      <div ref={wrapRef} className="card weekgrid-pro-wrap p-0">
+        <div className="weekgrid-pro">
           <div
-            className="weekgrid-pro-header"
-            style={{ display: "grid", gridTemplateColumns: colTemplate }}
+            ref={headerScrollRef}
+            className="weekgrid-pro-header-scroll"
+            onScroll={handleHeaderScroll}
           >
-            <div className="weekgrid-pro-corner">Hora</div>
-            {DAYS.map((d, day) => (
-              <div key={d} className={"weekgrid-pro-day" + (day === todayIdx ? " is-today" : "")}>
-                {d}
-                {day === todayIdx && <span className="today-tag">hoy</span>}
-              </div>
-            ))}
+            <div
+              className="weekgrid-pro-header"
+              style={{ display: "grid", gridTemplateColumns: colTemplate, minWidth: gridMinWidth }}
+            >
+              <div className="weekgrid-pro-corner">Hora</div>
+              {DAYS.map((d, day) => (
+                <div key={d} className={"weekgrid-pro-day" + (day === todayIdx ? " is-today" : "")}>
+                  <span className="weekgrid-pro-day-label">{d}</span>
+                  {day === todayIdx && <span className="today-tag">hoy</span>}
+                </div>
+              ))}
+            </div>
           </div>
 
           <div
-            className="weekgrid-pro-body"
-            style={{
-              display: "grid",
-              gridTemplateColumns: colTemplate,
-              position: "relative",
-            }}
+            ref={bodyScrollRef}
+            className="weekgrid-pro-body-scroll"
+            onScroll={handleBodyScroll}
           >
+            <div
+              className="weekgrid-pro-body"
+              style={{
+                display: "grid",
+                gridTemplateColumns: colTemplate,
+                position: "relative",
+                minWidth: gridMinWidth,
+              }}
+            >
             <div className="weekgrid-pro-gutter" style={{ position: "relative", height: totalHours * effectiveHourHeight }}>
               {hours.map((h) => (
                 <div
@@ -326,7 +449,7 @@ export default function WeekGrid({
                   return (
                     <div
                       key={block.id}
-                      className={"weekgrid-pro-block" + (onBlockClick ? " clickable" : "")}
+                      className={"weekgrid-pro-block" + (onBlockClick || shouldFitViewport ? " clickable" : "")}
                       style={{
                         position: "absolute",
                         top,
@@ -335,13 +458,13 @@ export default function WeekGrid({
                         width: `calc(${widthPct}% - 4px)`,
                         background: block.color,
                       }}
-                      onClick={() => onBlockClick?.(block)}
-                      role={onBlockClick ? "button" : undefined}
-                      tabIndex={onBlockClick ? 0 : undefined}
+                      onClick={() => handleBlockClick(block)}
+                      role={onBlockClick || shouldFitViewport ? "button" : undefined}
+                      tabIndex={onBlockClick || shouldFitViewport ? 0 : undefined}
                       onKeyDown={(e) => {
-                        if (onBlockClick && (e.key === "Enter" || e.key === " ")) {
+                        if ((onBlockClick || shouldFitViewport) && (e.key === "Enter" || e.key === " ")) {
                           e.preventDefault();
-                          onBlockClick(block);
+                          handleBlockClick(block);
                         }
                       }}
                     >
@@ -355,6 +478,7 @@ export default function WeekGrid({
                 })}
               </div>
             ))}
+            </div>
           </div>
         </div>
       </div>
@@ -379,7 +503,8 @@ export default function WeekGrid({
     "weekgrid-root space-y-3" +
     (compact ? " weekgrid-compact" : "") +
     (inDialog ? " weekgrid-in-dialog" : "") +
-    (isFullscreen ? " weekgrid-is-fullscreen" : "");
+    (isFullscreen ? " weekgrid-is-fullscreen" : "") +
+    (shouldFitViewport ? " weekgrid-fits-viewport" : "");
 
   const expandBtn = allowFullscreen && !isFullscreen ? (
     <button
@@ -415,7 +540,7 @@ export default function WeekGrid({
               </button>
             </div>
             <div className="weekgrid-fullscreen-body" ref={fullscreenBodyRef}>
-              <div className={rootClass.replace(" weekgrid-is-fullscreen", "")}>{gridContent}</div>
+              <div className={rootClass.replace(" weekgrid-is-fullscreen", "") + " weekgrid-fullscreen-host"}>{gridContent}</div>
             </div>
           </div>,
           document.body
@@ -427,7 +552,7 @@ export default function WeekGrid({
       <div className={rootClass}>
         {expandBtn && <div className="weekgrid-toolbar">{expandBtn}</div>}
         <div ref={sentinelRef} className="weekgrid-scroll-sentinel" aria-hidden />
-        <div className={"weekgrid-expand-mobile" + (expanded ? " is-expanded" : "")}>
+        <div ref={expandMobileRef} className={"weekgrid-expand-mobile" + (expanded ? " is-expanded" : "")}>
           {!isFullscreen && gridContent}
           <div className="weekgrid-expand-hint" aria-hidden={!expanded}>
             <ChevronUp size={12} />
@@ -435,6 +560,14 @@ export default function WeekGrid({
           </div>
         </div>
         {fullscreenPortal}
+        <CalendarEventDetailDialog
+          open={viewBlock != null}
+          onOpenChange={(o) => { if (!o) setViewBlock(null); }}
+          title={viewBlock?.detailTitle ?? viewBlock?.title ?? "Detalle"}
+          description={viewBlock?.subtitle}
+          color={viewBlock?.color}
+          rows={viewDialogRows}
+        />
       </div>
     );
   }
@@ -444,6 +577,14 @@ export default function WeekGrid({
       {expandBtn && <div className="weekgrid-toolbar">{expandBtn}</div>}
       {!isFullscreen && gridContent}
       {fullscreenPortal}
+      <CalendarEventDetailDialog
+        open={viewBlock != null}
+        onOpenChange={(o) => { if (!o) setViewBlock(null); }}
+        title={viewBlock?.detailTitle ?? viewBlock?.title ?? "Detalle"}
+        description={viewBlock?.subtitle}
+        color={viewBlock?.color}
+        rows={viewDialogRows}
+      />
     </div>
   );
 }

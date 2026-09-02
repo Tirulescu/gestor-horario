@@ -52,7 +52,7 @@ export default function LoginForm() {
         <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-blue-600 text-white mb-2 shadow-md">
           <CalendarClock size={28} />
         </div>
-        <h1 className="text-2xl font-semibold text-gray-900">Gestor de horario</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">Gestor horario</h1>
         <p className="text-sm text-gray-500">Inicia sesión con Google para gestionar tu horario</p>
       </div>
 

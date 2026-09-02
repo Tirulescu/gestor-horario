@@ -230,6 +230,139 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
 .toast-error   { border-left-color: var(--danger); }
 .toast-info    { border-left-color: var(--accent); }
 
+/* ---------- Listas de entidades (alumnos, asignaturas) ---------- */
+.entity-list {
+  display: grid;
+  gap: 0.75rem;
+}
+@media (min-width: 640px) {
+  .entity-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.entity-list.entity-list-stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1280px) {
+  .entity-list.entity-list-single-col { grid-template-columns: minmax(0, 1fr); }
+}
+
+.entity-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1rem 1.1rem;
+  border-radius: 0.9rem;
+  border: 1px solid #e5e7eb;
+  background: white;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+  min-width: 0;
+}
+.entity-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.entity-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #111827;
+  line-height: 1.3;
+  word-break: break-word;
+}
+.entity-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+.entity-card-section + .entity-card-section {
+  padding-top: 0.65rem;
+  border-top: 1px solid #f3f4f6;
+}
+.entity-card-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.45rem;
+}
+.entity-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+.entity-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+.entity-card-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 0.65rem;
+  margin: -0.35rem;
+  padding: 0.35rem;
+  transition: background 0.15s ease;
+}
+.entity-card-link:hover { background: #f8fafc; }
+.entity-card-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.entity-card-link-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 0;
+}
+.entity-card-link-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  min-width: 0;
+  flex: 1;
+}
+.entity-card-link-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.65rem;
+  background: #eff6ff;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.entity-card-link:hover .entity-card-link-icon { background: #dbeafe; }
+.entity-card-link:hover .entity-card-title { color: var(--accent); }
+.entity-card-enter-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--accent);
+}
+.entity-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid #f3f4f6;
+}
+
 /* ---------- Responsive table → cards ---------- */
 @media (max-width: 767px) {
   .btn { min-height: 44px; font-size: 0.9rem; padding: 0.55rem 1rem; }
@@ -634,18 +767,50 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
 .weekgrid-compact { --weekgrid-col-min: 96px; }
 
 .weekgrid-pro-wrap {
-  overflow: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   max-height: 82dvh;
   border-radius: 0.75rem;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.06), 0 4px 12px rgb(0 0 0 / 0.04);
-  scroll-behavior: smooth;
 }
-.weekgrid-pro-wrap * { touch-action: pan-x pan-y; }
 .weekgrid-pro-gutter span { line-height: 1; }
 .weekgrid-pro {
-  min-width: calc(var(--weekgrid-gutter) + 7 * var(--weekgrid-col-min));
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+/* Cabecera: scroll horizontal sincronizado (barra oculta; el gesto ocurre en el cuerpo) */
+.weekgrid-pro-header-scroll {
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  /* Reserva el mismo gutter vertical que el cuerpo para alinear columnas */
+  scrollbar-gutter: stable;
+}
+.weekgrid-pro-header-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+.weekgrid-pro-body-scroll {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  touch-action: pan-x pan-y;
+}
+.weekgrid-pro-body {
+  /* Espacio para que la etiqueta de la primera hora (desplazada -0.5rem) no quede cortada */
+  margin-top: 0.85rem;
 }
 
 @media (min-width: 768px) and (max-width: 1023px) {
@@ -697,7 +862,25 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
     border-left: none;
     border-right: none;
   }
-  .weekgrid-expand-mobile.is-expanded .weekgrid-inner {
+  .weekgrid-expand-mobile.is-expanded .weekgrid-pro,
+  .weekgrid-expand-mobile.is-expanded .weekgrid-pro-body-scroll {
+    flex: 1;
+    min-height: 0;
+  }
+  .weekgrid-expand-mobile.is-expanded .weekgrid-pro-body-scroll {
+    overflow: hidden;
+    scrollbar-gutter: auto;
+  }
+  .weekgrid-expand-mobile.is-expanded .weekgrid-pro-header-scroll {
+    overflow: hidden;
+    scrollbar-gutter: auto;
+  }
+  .weekgrid-expand-mobile.is-expanded .weekgrid-pro-header {
+    background: rgba(248, 250, 252, 0.98);
+    backdrop-filter: blur(8px);
+  }
+  .weekgrid-expand-mobile.is-expanded .weekgrid-inner,
+  .weekgrid-expand-mobile.is-expanded .weekgrid-inner-fit {
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -711,10 +894,6 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
     border-right: none;
     border-bottom: none;
     margin-top: 0;
-  }
-  .weekgrid-expand-mobile.is-expanded .weekgrid-pro-header {
-    background: rgba(248, 250, 252, 0.95);
-    backdrop-filter: blur(8px);
   }
   .weekgrid-expand-hint {
     display: flex;
@@ -785,6 +964,56 @@ body.weekgrid-fullscreen-active {
   color: #1e293b;
 }
 
+.weekgrid-fits-viewport.weekgrid-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.weekgrid-fits-viewport .weekgrid-inner-fit {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.weekgrid-fits-viewport .weekgrid-pro-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  max-height: none;
+}
+
+.weekgrid-fits-viewport .weekgrid-pro,
+.weekgrid-fits-viewport .weekgrid-pro-body-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.weekgrid-fits-viewport .weekgrid-pro-body-scroll {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
+.weekgrid-fits-viewport .weekgrid-pro-header-scroll {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
+.weekgrid-fits-viewport .weekgrid-legend {
+  flex-shrink: 0;
+}
+
+.weekgrid-fullscreen-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
 .weekgrid-fullscreen-overlay {
   position: fixed;
   inset: 0;
@@ -847,6 +1076,22 @@ body.weekgrid-fullscreen-active {
   border-radius: 0.65rem;
 }
 
+.weekgrid-fullscreen-overlay .weekgrid-pro,
+.weekgrid-fullscreen-overlay .weekgrid-pro-body-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.weekgrid-fullscreen-overlay .weekgrid-pro-body-scroll {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
+.weekgrid-fullscreen-overlay .weekgrid-pro-header-scroll {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
 .weekgrid-fullscreen-overlay .weekgrid-pro {
   min-width: 0;
   width: 100%;
@@ -880,9 +1125,10 @@ body.weekgrid-fullscreen-active {
 .weekgrid-pro-header {
   border-bottom: 1px solid #e5e7eb;
   background: #f8fafc;
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+  box-shadow: 0 1px 0 rgb(226 232 240), 0 2px 8px rgb(15 23 42 / 0.04);
 }
 
 /* Padding interior de columnas y bloques: mas aire alrededor */
@@ -892,20 +1138,34 @@ body.weekgrid-fullscreen-active {
 .weekgrid-pro-block-title { line-height: 1.25; }
 .weekgrid-pro-hour { padding-right: 6px; }
 .weekgrid-pro-corner {
-  padding: 0.5rem 0.4rem;
+  padding: 0.55rem 0.4rem;
   font-size: 0.72rem;
   font-weight: 600;
   color: #6b7280;
   border-right: 1px solid #e5e7eb;
-  text-align: left;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
 }
 .weekgrid-pro-day {
-  padding: 0.5rem 0.4rem;
+  padding: 0.55rem 0.35rem;
   font-size: 0.78rem;
   font-weight: 600;
-  color: #6b7280;
+  color: #64748b;
   border-right: 1px solid #e5e7eb;
-  text-align: left;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  background: #f8fafc;
+  min-height: 2.4rem;
+  box-sizing: border-box;
+}
+.weekgrid-pro-day-label {
+  letter-spacing: 0.01em;
 }
 .weekgrid-pro-day:last-child { border-right: none; }
 .weekgrid-pro-gutter {
@@ -919,6 +1179,10 @@ body.weekgrid-fullscreen-active {
   color: #9ca3af;
 }
 .weekgrid-pro-hour span { position: relative; top: -0.5rem; }
+/* En la primera hora el margen del body ya da aire; evita que quede pegada al borde */
+.weekgrid-pro-gutter .weekgrid-pro-hour:first-child span {
+  top: -0.35rem;
+}
 .weekgrid-pro-col {
   border-right: 1px solid #e5e7eb;
 }
@@ -981,9 +1245,11 @@ html, body { overflow-x: hidden; }
 }
 
 /* ---------- Calendario: hoy + bloques sin desborde ---------- */
-.weekgrid-pro-day.is-today { background: #eff6ff; color: var(--accent); }
+.weekgrid-pro-day.is-today {
+  background: #eff6ff;
+  color: var(--accent);
+}
 .today-tag {
-  margin-left: 0.3rem;
   font-size: 0.55rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -991,15 +1257,16 @@ html, body { overflow-x: hidden; }
   color: white;
   border-radius: 999px;
   padding: 0.05rem 0.35rem;
-  vertical-align: middle;
+  line-height: 1.2;
+  flex-shrink: 0;
 }
 .weekgrid-pro-block { overflow: hidden; }
 .weekgrid-pro-block-title, .weekgrid-pro-block-sub, .weekgrid-pro-block-time {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 @media (max-width: 767px) {
-  .weekgrid-pro-day { font-size: 0.72rem; padding: 0.5rem 0.3rem; text-align: center; }
-  .weekgrid-pro-corner { font-size: 0.66rem; padding: 0.5rem 0.3rem; }
+  .weekgrid-pro-day { font-size: 0.72rem; padding: 0.5rem 0.2rem; min-height: 2.25rem; }
+  .weekgrid-pro-corner { font-size: 0.66rem; padding: 0.5rem 0.2rem; }
   .weekgrid-pro-block { padding: 0.35rem 0.4rem; border-radius: 0.5rem; box-shadow: 0 1px 3px rgb(0 0 0 / 0.18); }
   .weekgrid-pro-block-title { font-size: 0.74rem; }
   .weekgrid-pro-block-time { font-size: 0.62rem; }
@@ -1017,16 +1284,12 @@ html, body { overflow-x: hidden; }
   }
 }
 
-/* Diálogo: calendario con altura flexible */
-.weekgrid-dialog-scroll {
-  max-height: 70dvh;
-}
+/* Diálogo: el scroll lo gestiona el propio calendario */
 .weekgrid-in-dialog .weekgrid-pro-wrap {
-  max-height: min(55dvh, 480px);
+  max-height: min(62dvh, 520px);
 }
 @media (max-width: 767px) {
-  .weekgrid-in-dialog .weekgrid-pro-wrap { max-height: 48dvh; }
-  .weekgrid-dialog-scroll { max-height: 75dvh; }
+  .weekgrid-in-dialog .weekgrid-pro-wrap { max-height: 56dvh; }
 }
 
 .weekgrid-pro-block.clickable { cursor: pointer; }

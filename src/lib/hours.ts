@@ -33,6 +33,47 @@ export function endHourFromDuration(startHour: number, durationMin: number): num
   return (Math.round(startHour * 60) + durationMin) / 60;
 }
 
+/** Duración de clase según asignatura colectiva o inscripción individual. */
+export function resolveMemberDurationMin(
+  subject: { defaultDurationMin: number; isCollective?: boolean },
+  member?: { durationMin: number | null } | null,
+): number {
+  if (subject.isCollective) return subject.defaultDurationMin;
+  return member?.durationMin ?? subject.defaultDurationMin;
+}
+
+/** Duraciones distintas definidas en una asignatura (defecto, por curso y por alumno). */
+export function collectSubjectDurationOptions(
+  subject: { defaultDurationMin: number; isCollective?: boolean },
+  members?: { durationMin: number | null }[] | null,
+  gradeDurations?: { durationMin: number }[] | null,
+): number[] {
+  if (subject.isCollective) return [subject.defaultDurationMin];
+  const durations = new Set<number>([subject.defaultDurationMin]);
+  for (const m of members ?? []) {
+    if (m.durationMin != null) durations.add(m.durationMin);
+  }
+  for (const g of gradeDurations ?? []) {
+    durations.add(g.durationMin);
+  }
+  return [...durations].sort((a, b) => a - b);
+}
+
+/** Etiqueta compacta para listas/selects (ej. "60 min" o "30 · 60 min"). */
+export function fmtSubjectDurationOptions(
+  subject: { defaultDurationMin: number; isCollective?: boolean },
+  members?: { durationMin: number | null }[] | null,
+  gradeDurations?: { durationMin: number }[] | null,
+): string {
+  const opts = collectSubjectDurationOptions(subject, members, gradeDurations);
+  if (opts.length === 1) return `${opts[0]} min`;
+  return opts.map((d) => `${d} min`).join(" · ");
+}
+
+export function slotMatchesDuration(startHour: number, endHour: number, durationMin: number): boolean {
+  return Math.abs(endHour - endHourFromDuration(startHour, durationMin)) < 1e-9;
+}
+
 export function durationFitsInInterval(
   startHour: number,
   durationMin: number,

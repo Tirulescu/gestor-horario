@@ -29,9 +29,18 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
-# ide
+# ide / agent local
 .idea
 .vscode
+.cursor/
+.agents/
+memories.md
+memory.md
+MEMORY.md
+**/memories.md
+
+# local ai tooling
+.opencode/
 
 # vercel
 .vercel

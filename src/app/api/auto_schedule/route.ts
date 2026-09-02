@@ -2,7 +2,9 @@ import { NextRequest } from "next/server";
 import { autoScheduleByTeacher } from "@/lib/autoSchedule";
 import { withTeacherScheduleLock } from "@/lib/autoScheduleLock";
 import { apiError } from "@/lib/validate";
-import { requireTeacher, assertOwnTeacher, assertSubjectOwned } from "@/lib/auth/requireTeacher";
+import { requireTeacher, assertOwnTeacher, forbid } from "@/lib/auth/requireTeacher";
+import { db, schema } from "@/db";
+import { and, eq, inArray } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
   const auth = await requireTeacher();
@@ -18,20 +20,24 @@ export async function POST(req: NextRequest) {
     ? body.subjectIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isInteger(n) && n > 0)
     : undefined;
 
-  if (!subjectIds?.length && auth.teacher.scheduleFixed) {
-    return apiError("Horario global fijado — auto-agenda asignaturas concretas o desactiva «Fijar horario» en tu perfil", 403);
+  if (auth.teacher.scheduleFixed) {
+    return apiError("Horario fijado — desactiva «Fijar horario» en tu perfil para usar el auto-agendado", 403);
   }
 
   if (subjectIds?.length) {
-    for (const sid of subjectIds) {
-      const deniedSubject = await assertSubjectOwned(sid, auth.teacher.id);
-      if (deniedSubject) return deniedSubject;
-    }
+    const owned = await db.query.subjects.findMany({
+      where: and(
+        eq(schema.subjects.teacherId, auth.teacher.id),
+        inArray(schema.subjects.id, subjectIds),
+      ),
+      columns: { id: true },
+    });
+    if (owned.length !== subjectIds.length) return forbid();
   }
 
   try {
-    const result = await withTeacherScheduleLock(teacherId, () =>
-      autoScheduleByTeacher(teacherId, { subjectIds }),
+    const result = await withTeacherScheduleLock(teacherId, (tx) =>
+      autoScheduleByTeacher(teacherId, { subjectIds }, tx),
     );
     return Response.json(result);
   } catch (e) {

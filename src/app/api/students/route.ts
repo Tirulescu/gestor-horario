@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
 import { eq, inArray } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
-import { normalizeRanges } from "@/lib/studentAvailability";
+import { firstAvailabilityBlockedConflict, normalizeRanges } from "@/lib/studentAvailability";
 import {
   requireTeacher,
   assertOwnTeacher,
@@ -72,7 +72,20 @@ export async function PUT(req: NextRequest) {
       .filter((b: { day: number; start: number; end: number }) => Number.isFinite(b.day) && Number.isFinite(b.start) && Number.isFinite(b.end) && b.end > b.start);
   }
   if (body.availableRanges !== undefined) {
-    patch.availableRanges = normalizeRanges(body.availableRanges);
+    const available = normalizeRanges(body.availableRanges);
+    const blocked =
+      body.blockedRanges !== undefined
+        ? normalizeRanges(body.blockedRanges)
+        : normalizeRanges(
+            (await db.query.students.findFirst({
+              where: eq(schema.students.id, id),
+              columns: { blockedRanges: true },
+            }))?.blockedRanges
+          );
+    if (firstAvailabilityBlockedConflict(available, blocked)) {
+      return apiError("La disponibilidad no puede incluir horas bloqueadas");
+    }
+    patch.availableRanges = available;
   }
   const [updated] = await db.update(schema.students).set(patch).where(eq(schema.students.id, id)).returning();
   if (!updated) return apiError("No encontrado", 404);

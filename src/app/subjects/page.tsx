@@ -1,9 +1,9 @@
 "use client";
 
 import { warmData, put, invalidate } from "@/lib/clientCache";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Save, X, BookOpen, Clock, ExternalLink } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, X, BookOpen, Clock, ChevronRight, Users } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -14,14 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
-} from "@/components/ui/select";
-import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import { TableCardSkeleton } from "@/components/skeletons";
+import SubjectDurationBadges from "@/components/SubjectDurationBadges";
 
 interface Subject {
   id: number;
@@ -29,19 +26,11 @@ interface Subject {
   teacherId: number;
   defaultDurationMin: number;
   isCollective?: boolean;
-  teacher?: { name: string };
-  subjectStudents?: { id: number }[];
+  subjectStudents?: { id: number; durationMin: number | null }[];
+  subjectGradeDurations?: { id: number; durationMin: number }[];
 }
 
-export default function SubjectsPageWrapper() {
-  return (
-    <Suspense fallback={<TableCardSkeleton rows={4} />}>
-      <SubjectsPage />
-    </Suspense>
-  );
-}
-
-function SubjectsPage() {
+export default function SubjectsPage() {
   const toast = useToast();
   const [subjects, setSubjects] = useState<Subject[] | null>(null);
   const [name, setName] = useState("");
@@ -52,14 +41,9 @@ function SubjectsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<number | null>(null);
 
-  async function load(force = false) {
-    if (!force) {
-      const cs = warmData<Subject[]>("/api/subjects");
-      if (cs !== null) {
-        setSubjects(cs);
-        return;
-      }
-    }
+  async function load() {
+    const cached = warmData<Subject[]>("/api/subjects");
+    if (cached !== null) setSubjects(cached);
     const s = await fetch("/api/subjects").then((r) => r.json());
     setSubjects(s);
     put("/api/subjects", s);
@@ -129,7 +113,7 @@ function SubjectsPage() {
     toast("success", editingId ? "Asignatura actualizada" : "Asignatura creada");
     closeForm();
     invalidate("/api/subjects");
-    await load(true);
+    await load();
   }
 
   async function confirmDelete() {
@@ -142,7 +126,7 @@ function SubjectsPage() {
     } else {
       invalidate("/api/subjects"); toast("success", "Asignatura borrada");
     }
-    await load(true);
+    await load();
   }
 
   return (
@@ -161,46 +145,70 @@ function SubjectsPage() {
 
       {subjects === null ? (
         <TableCardSkeleton rows={4} />
+      ) : visibleSubjects.length === 0 ? (
+        <div className="entity-card text-gray-400 text-sm">No hay asignaturas aún</div>
       ) : (
-      <Card className="p-5 overflow-x-auto">
-        {visibleSubjects.length === 0 ? (
-          <div className="text-gray-400 text-sm">No hay asignaturas aún</div>
-        ) : (
-          <table className="w-full text-sm rtable">
-            <thead>
-              <tr className="text-left border-b border-gray-100">
-                <th className="py-2 pr-4 font-medium text-gray-600">Nombre</th>
-                <th className="py-2 pr-4 font-medium text-gray-600">Tipo</th>
-                <th className="py-2 pr-4 font-medium text-gray-600">Duración</th>
-                <th className="py-2 pr-4 font-medium text-gray-600">Alumnos</th>
-                <th className="py-2 font-medium text-gray-600 text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleSubjects.map((s) => (
-                <tr key={s.id} className="border-b border-gray-50">
-                  <td className="py-2 pr-4" data-label="Nombre">
-                    <Button asChild variant="outline" size="xs">
-                      <Link href={`/subjects/${s.id}`}>{s.name} <ExternalLink /></Link>
-                    </Button>
-                  </td>
-                  <td className="py-2 pr-4" data-label="Tipo">
-                    {s.isCollective ? <Badge variant="success">Colectiva</Badge> : <Badge variant="gray">Individual</Badge>}
-                  </td>
-                  <td className="py-2 pr-4" data-label="Duración">{s.defaultDurationMin} min</td>
-                  <td className="py-2 pr-4" data-label="Alumnos">{s.subjectStudents?.length ?? 0}</td>
-                  <td className="py-2" data-actions>
-                    <div className="flex gap-1.5 justify-end">
-                      <Button size="iconSm" variant="outline" onClick={() => openEdit(s)} aria-label="Editar"><Pencil size={14} /></Button>
-                      <Button size="iconSm" variant="destructive" onClick={() => setConfirmId(s.id)} aria-label="Borrar"><Trash2 size={14} /></Button>
+        <div className="entity-list">
+          {visibleSubjects.map((s) => {
+            const studentCount = s.subjectStudents?.length ?? 0;
+            return (
+              <article key={s.id} className="entity-card">
+                <Link href={`/subjects/${s.id}`} className="entity-card-link">
+                  <div className="entity-card-link-row">
+                    <div className="entity-card-link-title">
+                      <span className="entity-card-link-icon" aria-hidden>
+                        <BookOpen size={18} />
+                      </span>
+                      <div className="min-w-0">
+                        <h3 className="entity-card-title">{s.name}</h3>
+                        <span className="entity-card-enter-hint mt-1">
+                          Ver alumnos y horarios
+                          <ChevronRight size={14} className="shrink-0" />
+                        </span>
+                      </div>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
+                    <ChevronRight size={20} className="shrink-0 text-gray-300 mt-1" aria-hidden />
+                  </div>
+                  <div className="entity-card-chips pl-[2.8rem]">
+                    {s.isCollective ? (
+                      <Badge variant="success">Colectiva</Badge>
+                    ) : (
+                      <Badge variant="gray">Individual</Badge>
+                    )}
+                    <SubjectDurationBadges
+                      subject={s}
+                      members={s.subjectStudents}
+                      gradeDurations={s.subjectGradeDurations}
+                    />
+                    <Badge variant="default" className="font-normal gap-1">
+                      <Users size={11} />
+                      {studentCount} {studentCount === 1 ? "alumno" : "alumnos"}
+                    </Badge>
+                  </div>
+                </Link>
+                <div className="entity-card-footer">
+                  <Button
+                    size="iconSm"
+                    variant="outline"
+                    onClick={() => openEdit(s)}
+                    aria-label={`Editar ${s.name}`}
+                    title="Editar"
+                  >
+                    <Pencil size={14} />
+                  </Button>
+                  <Button
+                    size="iconSm"
+                    variant="destructive"
+                    onClick={() => setConfirmId(s.id)}
+                    aria-label={`Borrar ${s.name}`}
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
       )}
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>

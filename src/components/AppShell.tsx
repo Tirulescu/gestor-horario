@@ -24,7 +24,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600 text-white shadow-sm">
                 <CalendarClock size={18} />
               </span>
-              <span className="hidden sm:inline">Gestor de horario</span>
+              <span className="hidden sm:inline">Gestor horario</span>
               <span className="sm:hidden">Horario</span>
             </Link>
 

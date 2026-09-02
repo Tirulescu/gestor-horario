@@ -24,24 +24,26 @@ export async function GET(req: NextRequest) {
   const denied = assertOwnTeacher(auth.teacher, teacherId);
   if (denied) return denied;
 
-  let rows = await db.query.assignments.findMany({
-    where: eq(schema.assignments.teacherId, teacherId),
-    with: { student: true, subject: { with: { teacher: true } }, teacher: true },
-    orderBy: (a, { asc }) => [asc(a.dayOfWeek), asc(a.startHour)],
-  });
+  const conditions = [eq(schema.assignments.teacherId, teacherId)];
 
   if (subjectId) {
     const sid = Number(subjectId);
     const subjectDenied = await assertSubjectOwned(sid, auth.teacher.id);
     if (subjectDenied) return subjectDenied;
-    rows = rows.filter((r) => r.subjectId === sid);
+    conditions.push(eq(schema.assignments.subjectId, sid));
   }
   if (studentId) {
     const stid = Number(studentId);
     const studentDenied = await assertStudentAccessible(stid, auth.teacher.id);
     if (studentDenied) return studentDenied;
-    rows = rows.filter((r) => r.studentId === stid);
+    conditions.push(eq(schema.assignments.studentId, stid));
   }
+
+  const rows = await db.query.assignments.findMany({
+    where: and(...conditions),
+    with: { student: true, subject: true },
+    orderBy: (a, { asc }) => [asc(a.dayOfWeek), asc(a.startHour)],
+  });
   return Response.json(rows);
 }
 
@@ -75,6 +77,19 @@ export async function POST(req: NextRequest) {
   if (!subject) return apiError("Asignatura no encontrada", 404);
   if (subject.teacherId !== teacherId) return apiError("La asignatura no pertenece al profesor", 400);
 
+  const enrollment = await db.query.subjectStudents.findFirst({
+    where: and(
+      eq(schema.subjectStudents.subjectId, subjectId),
+      eq(schema.subjectStudents.studentId, studentId),
+    ),
+  });
+  if (!enrollment) return apiError("El alumno no está inscrito en esa asignatura", 400);
+
+  const collectiveSessionId =
+    body.collectiveSessionId != null && String(body.collectiveSessionId).trim() !== ""
+      ? String(body.collectiveSessionId).trim()
+      : null;
+
   const conflict = await validateAssignmentSlot({
     teacherId,
     studentIds: [studentId],
@@ -85,7 +100,16 @@ export async function POST(req: NextRequest) {
   if (conflict) return apiError(conflict);
 
   const [created] = await db.insert(schema.assignments)
-    .values({ teacherId, subjectId, studentId, dayOfWeek, startHour, endHour, origin: "manual" })
+    .values({
+      teacherId,
+      subjectId,
+      studentId,
+      dayOfWeek,
+      startHour,
+      endHour,
+      origin: "manual",
+      collectiveSessionId,
+    })
     .returning();
   return Response.json(created, { status: 201 });
 }

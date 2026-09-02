@@ -1,12 +1,12 @@
 /**
  * Lógica pura para agendar asignaturas colectivas:
- * busca un único hueco con la duración exacta de la asignatura donde quepan el máximo de alumnos.
+ * un único hueco de duración exacta. Ante todo maximiza cuántos alumnos
+ * pueden asistir; a igualdad, prioridad y luego solicitudes.
  */
 
 import { endHourFromDuration, slotStartsForDuration } from "@/lib/hours";
+import type { Interval } from "@/lib/scheduleIntervals";
 import { slotWithinAvailable, type TimeRange } from "@/lib/studentAvailability";
-
-export interface Interval { start: number; end: number; }
 
 export interface CollectiveMember {
   studentId: number;
@@ -16,6 +16,11 @@ export interface CollectiveMember {
   /** Franjas disponibles del alumno; se usan como opciones implícitas si no hay solicitud que encaje. */
   availableRanges?: TimeRange[];
 }
+
+/** Puntuación si el hueco solo encaja por disponibilidad, no por una solicitud. */
+export const PREF_AVAILABLE = 50;
+/** Puntuación si el hueco no casa con solicitud ni disponibilidad explícita. */
+export const PREF_NO_MATCH = 100;
 
 export function prefScoreForSlot(
   requests: CollectiveMember["requests"],
@@ -31,9 +36,16 @@ export function prefScoreForSlot(
     if (interEnd - interStart >= end - start - 1e-9) return req.prefOrder;
   }
   if (availableRanges.length > 0 && slotWithinAvailable(day, start, end, availableRanges)) {
-    return 0;
+    return PREF_AVAILABLE;
   }
-  return 100;
+  return PREF_NO_MATCH;
+}
+
+/** Valor persistido/mostrado: 1..n solicitud, 0 disponibilidad, null sin petición. */
+export function prefOrderFromScore(score: number): number | null {
+  if (score < PREF_AVAILABLE) return score;
+  if (score === PREF_AVAILABLE) return 0;
+  return null;
 }
 
 export interface CollectiveSlotResult {
@@ -43,14 +55,34 @@ export interface CollectiveSlotResult {
   totalMembers: number;
 }
 
+function attendanceByPriorityTier(fitting: CollectiveMember[]): number[] {
+  const maxP = fitting.reduce((m, x) => Math.max(m, x.priority), 0);
+  const counts = Array.from({ length: Math.max(maxP, 1) }, () => 0);
+  for (const m of fitting) {
+    const idx = Math.max(1, m.priority) - 1;
+    counts[idx] = (counts[idx] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function comparePriorityTiers(a: number[], b: number[]): number {
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
+
 /**
- * Encuentra el hueco donde caben más alumnos de la asignatura colectiva.
- * La duración del hueco es exactamente `durationMin` (la definida en la asignatura).
+ * Encuentra el hueco de duración exacta `durationMin` para la sesión colectiva.
  *
  * Criterios (en orden):
- * 1. Máximo número de alumnos que pueden asistir.
- * 2. Mejor coincidencia con posibilidades de horario (prefOrder más bajo).
- * 3. Mayor prioridad de los alumnos incluidos (priority más bajo).
+ * 1. Máximo número de alumnos que pueden asistir (disponibilidad).
+ * 2. A igualdad, mejor cobertura de alumnos de mayor prioridad.
+ * 3. A igualdad, mejor coincidencia con solicitudes.
+ * 4. Día y hora más tempranos (estable).
  */
 export function findBestCollectiveSlot(
   members: CollectiveMember[],
@@ -66,12 +98,15 @@ export function findBestCollectiveSlot(
     slot: { day: number; start: number; end: number };
     fitting: CollectiveMember[];
     count: number;
+    tiers: number[];
     prefSum: number;
-    prioritySum: number;
   } | null = null;
 
-  for (const dStr of Object.keys(currentFree)) {
-    const day = Number(dStr);
+  const days = Object.keys(currentFree)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  for (const day of days) {
     for (const f of currentFree[day] ?? []) {
       for (const start of slotStartsForDuration(f, durationMin)) {
         const end = endHourFromDuration(start, durationMin);
@@ -82,15 +117,24 @@ export function findBestCollectiveSlot(
           (s, m) => s + prefScoreForSlot(m.requests, day, start, end, m.availableRanges ?? []),
           0,
         );
-        const prioritySum = fitting.reduce((s, m) => s + m.priority, 0);
+        const tiers = attendanceByPriorityTier(fitting);
+        const count = fitting.length;
+        const tierCmp = best ? comparePriorityTiers(tiers, best.tiers) : 1;
 
-        if (
+        const better =
           !best
-          || fitting.length > best.count
-          || (fitting.length === best.count && prefSum < best.prefSum)
-          || (fitting.length === best.count && prefSum === best.prefSum && prioritySum < best.prioritySum)
-        ) {
-          best = { slot: { day, start, end }, fitting, count: fitting.length, prefSum, prioritySum };
+          || count > best.count
+          || (count === best.count && tierCmp > 0)
+          || (count === best.count && tierCmp === 0 && prefSum < best.prefSum)
+          || (
+            count === best.count
+            && tierCmp === 0
+            && prefSum === best.prefSum
+            && (day < best.slot.day || (day === best.slot.day && start < best.slot.start))
+          );
+
+        if (better) {
+          best = { slot: { day, start, end }, fitting, count, tiers, prefSum };
         }
       }
     }

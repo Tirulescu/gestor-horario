@@ -1,9 +1,9 @@
 "use client";
 
-// Cache en memoria + localStorage (persistente en el dispositivo): las paginas
-// pintan al instante desde cache y SOLO refetchean tras una mutacion.
+// localStorage solo acelera el primer pintado; el servidor es la fuente de verdad.
 const KEY = "__gestorHorarioCache";
-const MUT_KEY = "__gestorHorarioMut";
+const STALE_KEY = "__gestorHorarioStale";
+const LS_PREFIX = "__agc:";
 
 type CacheShape = Record<string, unknown>;
 
@@ -14,32 +14,81 @@ function store(): CacheShape {
   return w[KEY];
 }
 
-function mutations(): Set<string> {
+let staleCache: Set<string> | null = null;
+
+function staleKeys(): Set<string> {
   if (typeof window === "undefined") return new Set();
+  if (staleCache) return staleCache;
   try {
-    const raw = localStorage.getItem(MUT_KEY);
-    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    const raw = localStorage.getItem(STALE_KEY);
+    staleCache = new Set(raw ? (JSON.parse(raw) as string[]) : []);
   } catch {
-    return new Set();
+    staleCache = new Set();
   }
+  return staleCache;
 }
 
-function markMutation(key: string) {
+function persistStale(keys: Set<string>) {
   if (typeof window === "undefined") return;
   try {
-    const m = mutations();
-    m.add(key);
-    localStorage.setItem(MUT_KEY, JSON.stringify([...m]));
+    localStorage.setItem(STALE_KEY, JSON.stringify([...keys]));
   } catch {}
 }
 
-function clearMutation(key: string) {
-  if (typeof window === "undefined") return;
+function removePersisted(key: string) {
   try {
-    const m = mutations();
-    m.delete(key);
-    localStorage.setItem(MUT_KEY, JSON.stringify([...m]));
+    localStorage.removeItem(`${LS_PREFIX}${key}`);
   } catch {}
+}
+
+function markStale(key: string) {
+  delete store()[key];
+  removePersisted(key);
+  const s = staleKeys();
+  s.add(key);
+  persistStale(s);
+}
+
+function clearStale(key: string) {
+  const s = staleKeys();
+  if (!s.delete(key)) return;
+  persistStale(s);
+}
+
+if (typeof window !== "undefined") {
+  try {
+    const legacy = localStorage.getItem("__gestorHorarioMut");
+    if (legacy) {
+      localStorage.removeItem("__gestorHorarioMut");
+      const s = staleKeys();
+      for (const k of JSON.parse(legacy) as string[]) s.add(k);
+      persistStale(s);
+    }
+  } catch {}
+
+  window.addEventListener("storage", (ev) => {
+    if (ev.key === STALE_KEY) {
+      staleCache = null;
+      if (ev.newValue) {
+        try {
+          for (const k of JSON.parse(ev.newValue) as string[]) {
+            delete store()[k];
+          }
+        } catch {}
+      }
+      return;
+    }
+    if (ev.key?.startsWith(LS_PREFIX) && ev.newValue != null) {
+      const cacheKey = ev.key.slice(LS_PREFIX.length);
+      if (staleKeys().has(cacheKey)) return;
+      try {
+        store()[cacheKey] = JSON.parse(ev.newValue);
+      } catch {}
+    }
+    if (ev.key?.startsWith(LS_PREFIX) && ev.newValue == null) {
+      delete store()[ev.key.slice(LS_PREFIX.length)];
+    }
+  });
 }
 
 export function peek<T>(key: string): T | null {
@@ -49,74 +98,62 @@ export function peek<T>(key: string): T | null {
 
 export function put(key: string, data: unknown) {
   store()[key] = data;
-  // persistir EN EL DISPOSITIVO: localStorage sobrevive a cerrar y reabrir la app
+  clearStale(key);
   try {
-    localStorage.setItem(`__agc:${key}`, JSON.stringify(data));
+    localStorage.setItem(`${LS_PREFIX}${key}`, JSON.stringify(data));
   } catch {}
 }
 
-/** Datos guardados en el DISPOSITIVO (localStorage, sobrevive a cerrar la app). */
-export function peekSession<T>(key: string): T | null {
+function peekSession<T>(key: string): T | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(`__agc:${key}`);
+    const raw = localStorage.getItem(`${LS_PREFIX}${key}`);
     return raw ? (JSON.parse(raw) as T) : null;
   } catch {
     return null;
   }
 }
 
-export async function fetchJSON<T>(key: string, url: string): Promise<T> {
-  const res = await fetch(url);
-  const data = (await res.json()) as T;
-  put(key, data);
-  return data;
-}
-
-/**
- * Datos para pintar al instante: cache de sesion si existe y no hubo mutacion.
- * Si hubo mutacion (crear/editar/borrar) devuelve null para forzar refresco real.
- */
-/** Datos guardados en el dispositivo: pintan al instante. */
+/** Cache válida para pintar al instante. Usar en useEffect, no en useState inicial. */
 export function warmData<T>(key: string): T | null {
-  if (mutations().has(key)) {
-    clearMutation(key);
-    return null;
-  }
+  if (staleKeys().has(key)) return null;
   const mem = peek<T>(key);
   if (mem !== null) return mem;
-  return peekSession<T>(key);
+  const persisted = peekSession<T>(key);
+  if (persisted !== null) store()[key] = persisted;
+  return persisted;
 }
 
-/** Llamar DESPUES de cualquier POST/PUT/PATCH/DELETE sobre un endpoint cacheado. */
+/** Borra cache obsoleta; llamar antes de refetch tras mutación. */
 export function invalidate(key: string) {
-  markMutation(key);
+  markStale(key);
 }
 
-/** Invalida varias claves de cache tras una mutacion. */
 export function invalidateMany(keys: string[]) {
   for (const key of keys) invalidate(key);
 }
 
-export const WARM_ENDPOINTS: [string, string][] = [
-  ["teachers", "/api/teachers"],
-  ["subjects", "/api/subjects"],
-  ["students", "/api/students"],
-  ["subject_students", "/api/subject_students"],
-  ["slot_requests", "/api/slot_requests"],
-  ["assignments", "/api/assignments"],
-  ["availabilities", "/api/availabilities"],
-];
+export const WARM_ENDPOINTS = [
+  "/api/teachers",
+  "/api/subjects",
+  "/api/students",
+  "/api/subject_students",
+  "/api/slot_requests",
+  "/api/assignments",
+  "/api/availabilities",
+  "/api/teacher_blocks",
+] as const;
 
 export function prefetchAll() {
   if (typeof window === "undefined") return;
   const w = window as unknown as { __gestorHorarioWarm?: boolean };
   if (w.__gestorHorarioWarm) return;
   w.__gestorHorarioWarm = true;
-  for (const [key, url] of WARM_ENDPOINTS) {
+  for (const url of WARM_ENDPOINTS) {
+    if (warmData(url) !== null) continue;
     fetch(url)
       .then((r) => r.json())
-      .then((d) => put(key, d))
+      .then((d) => put(url, d))
       .catch(() => {});
   }
 }

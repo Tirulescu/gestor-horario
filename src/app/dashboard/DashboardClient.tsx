@@ -2,12 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  Briefcase, Trash2, Plus, Save, X, Sparkles, Play, CalendarPlus,
+  Briefcase, Trash2, Save, Sparkles, Play, CalendarClock,
 } from "lucide-react";
 import WeekGrid, { type WeekBlock } from "@/components/WeekGrid";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
@@ -23,10 +23,14 @@ import PageHeader from "@/components/PageHeader";
 import { WeekGridSkeleton } from "@/components/skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DAYS } from "@/lib/validate";
-import { fmtHour, fmtRange, hourOptions, endHourFromDuration, fmtDurationMin, SCHEDULE_DAY_START, SCHEDULE_DAY_END } from "@/lib/hours";
+import { fmtHour, fmtRange, hourOptions, endHourFromDuration, fmtDurationMin, resolveMemberDurationMin, SCHEDULE_DAY_START, SCHEDULE_DAY_END } from "@/lib/hours";
+import { firstAvailabilityBlockedConflict, getAssignmentEffectiveRanges, getSlotHourSetsFromRanges, normalizeRanges, validateSlotRequest, type TimeRange } from "@/lib/studentAvailability";
+import TeacherScheduleManageDialog from "@/components/TeacherScheduleManageDialog";
 import { invalidate, invalidateMany, put, warmData } from "@/lib/clientCache";
 
 const COLORS = ["#2563eb", "#1d4ed8", "#0891b2", "#4f46e5", "#0284c7", "#7c3aed", "#0e7490", "#4338ca"];
+const HOURS_START = hourOptions(8, 23);
+const HOURS_END = hourOptions(9, 24);
 
 interface Teacher { id: number; name: string; email?: string | null; scheduleFixed?: boolean; }
 interface Subject {
@@ -34,12 +38,40 @@ interface Subject {
   isCollective?: boolean; scheduleFixed?: boolean;
 }
 interface TeacherBlock { id: number; teacherId: number; title: string; dayOfWeek: number; startHour: number; endHour: number; }
+interface Availability { id: number; teacherId: number; dayOfWeek: number; startHour: number; endHour: number; }
+interface Student {
+  id: number;
+  name: string;
+  availableRanges?: TimeRange[];
+  blockedRanges?: TimeRange[];
+}
+interface SubjectStudent {
+  subjectId: number;
+  studentId: number;
+  durationMin: number | null;
+}
 interface Assignment {
   id: number; teacherId: number; subjectId: number; studentId: number;
   dayOfWeek: number; startHour: number; endHour: number; origin: string;
   collectiveSessionId?: string | null;
   student: { id: number; name: string };
   subject: { id: number; name: string; isCollective?: boolean };
+}
+
+function readDashboardCache() {
+  const teachers = warmData<Teacher[]>("/api/teachers");
+  const subs = warmData<Subject[]>("/api/subjects");
+  const asg = warmData<Assignment[]>("/api/assignments");
+  const tb = warmData<TeacherBlock[]>("/api/teacher_blocks");
+  const av = warmData<Availability[]>("/api/availabilities");
+  if (!teachers || !subs || !asg || !tb || !av) return null;
+  return {
+    teacher: teachers[0] ?? null,
+    subjects: subs,
+    assignments: asg,
+    teacherBlocks: tb,
+    availabilities: av,
+  };
 }
 
 export default function DashboardClient() {
@@ -51,47 +83,28 @@ export default function DashboardClient() {
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [selectedCollectiveSession, setSelectedCollectiveSession] = useState<Assignment[] | null>(null);
   const [teacherBlocks, setTeacherBlocks] = useState<TeacherBlock[]>([]);
-  const [tbOpen, setTbOpen] = useState(false);
-  const [tbTitle, setTbTitle] = useState("");
-  const [tbDay, setTbDay] = useState("0");
-  const [tbStart, setTbStart] = useState("");
-  const [tbEnd, setTbEnd] = useState("");
+  const [availabilities, setAvailabilities] = useState<Availability[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [subjectStudents, setSubjectStudents] = useState<SubjectStudent[]>([]);
   const [confirmTb, setConfirmTb] = useState<TeacherBlock | null>(null);
+  const [confirmDeleteAsg, setConfirmDeleteAsg] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [autoResult, setAutoResult] = useState<AutoScheduleResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-
-  const [avOpen, setAvOpen] = useState(false);
-  const [aDay, setADay] = useState("0");
-  const [aStart, setAStart] = useState("");
-  const [aEnd, setAEnd] = useState("");
 
   const [editAsgDay, setEditAsgDay] = useState("0");
   const [editAsgStart, setEditAsgStart] = useState("");
   const [editAsgEnd, setEditAsgEnd] = useState("");
 
-  const HOURS_START = hourOptions(8, 23);
-  const HOURS_END = hourOptions(9, 24);
-
-  function applyDashboardData(
-    t: Teacher | null,
-    subs: Subject[],
-    asg: Assignment[],
-    tb: TeacherBlock[],
-  ) {
-    setTeacher(t);
-    setSubjects(subs);
-    setAssignments(asg);
-    setTeacherBlocks(tb);
-  }
-
   function hydrateFromCache(): boolean {
-    const teachers = warmData<Teacher[]>("/api/teachers");
-    const subs = warmData<Subject[]>("/api/subjects");
-    const asg = warmData<Assignment[]>("/api/assignments");
-    const tb = warmData<TeacherBlock[]>("/api/teacher_blocks");
-    if (!teachers || !subs || !asg || !tb) return false;
-    applyDashboardData(teachers[0] ?? null, subs, asg, tb);
+    const cached = readDashboardCache();
+    if (!cached) return false;
+    setTeacher(cached.teacher);
+    setSubjects(cached.subjects);
+    setAssignments(cached.assignments);
+    setTeacherBlocks(cached.teacherBlocks);
+    setAvailabilities(cached.availabilities);
     return true;
   }
 
@@ -99,17 +112,29 @@ export default function DashboardClient() {
     const hadCache = hydrateFromCache();
     if (hadCache) setLoading(false);
     try {
-      const [teachers, subs, asg, tb] = await Promise.all([
+      const [teachers, subs, asg, tb, av, sts, ss] = await Promise.all([
         fetch("/api/teachers").then((r) => r.json()) as Promise<Teacher[]>,
         fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
         fetch("/api/assignments").then((r) => r.json()) as Promise<Assignment[]>,
         fetch("/api/teacher_blocks").then((r) => r.json()) as Promise<TeacherBlock[]>,
+        fetch("/api/availabilities").then((r) => r.json()) as Promise<Availability[]>,
+        fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
+        fetch("/api/subject_students").then((r) => r.json()) as Promise<SubjectStudent[]>,
       ]);
-      applyDashboardData(teachers[0] ?? null, subs, asg, tb);
+      setTeacher(teachers[0] ?? null);
+      setSubjects(subs);
+      setAssignments(asg);
+      setTeacherBlocks(tb);
+      setAvailabilities(av);
+      setStudents(sts);
+      setSubjectStudents(ss);
       put("/api/teachers", teachers);
       put("/api/subjects", subs);
       put("/api/assignments", asg);
       put("/api/teacher_blocks", tb);
+      put("/api/availabilities", av);
+      put("/api/students", sts);
+      put("/api/subject_students", ss);
     } finally {
       setLoading(false);
     }
@@ -138,7 +163,42 @@ export default function DashboardClient() {
     return m;
   }, [subjects]);
 
-  const blockBlocks: WeekBlock[] = teacherBlocks.map((b) => ({
+  function memberFor(subjectId: number, studentId: number) {
+    return subjectStudents.find((ss) => ss.subjectId === subjectId && ss.studentId === studentId) ?? null;
+  }
+
+  function assignmentDurationMin(target: Assignment, collective: Assignment[] | null): number | null {
+    const subj = subjects.find((s) => s.id === target.subjectId);
+    if (!subj) return null;
+    if (collective) return subj.defaultDurationMin;
+    return resolveMemberDurationMin(subj, memberFor(target.subjectId, target.studentId));
+  }
+
+  function studentsForAssignment(target: Assignment, collective: Assignment[] | null): Student[] {
+    const ids = collective ? collective.map((a) => a.studentId) : [target.studentId];
+    return ids.map((id) => students.find((s) => s.id === id)).filter((s): s is Student => s != null);
+  }
+
+  const editTarget = selectedCollectiveSession?.[0] ?? selectedAssignment;
+  const editDurationMin = editTarget ? assignmentDurationMin(editTarget, selectedCollectiveSession) : null;
+
+  const editHourSets = useMemo(() => {
+    if (!editTarget) return { startSet: new Set<string>(), endSet: new Set<string>() };
+    const day = Number(editAsgDay);
+    const slotStudents = studentsForAssignment(editTarget, selectedCollectiveSession).map((st) => ({
+      available: normalizeRanges(st.availableRanges),
+      blocked: normalizeRanges(st.blockedRanges),
+    }));
+    const ranges = getAssignmentEffectiveRanges(day, availabilities, slotStudents);
+    return getSlotHourSetsFromRanges(ranges, HOURS_START, HOURS_END, editAsgStart, editDurationMin ?? undefined);
+  }, [editTarget, selectedCollectiveSession, editAsgDay, editAsgStart, editDurationMin, availabilities, students]);
+
+  function hourItem(o: { value: string; label: string }, allowed: Set<string>) {
+    if (!allowed.has(o.value)) return null;
+    return <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>;
+  }
+
+  const blockBlocks: WeekBlock[] = useMemo(() => teacherBlocks.map((b) => ({
     id: 1000000 + b.id,
     dayOfWeek: b.dayOfWeek,
     startHour: b.startHour,
@@ -146,7 +206,13 @@ export default function DashboardClient() {
     title: b.title,
     subtitle: "bloqueado",
     color: "#475569",
-  }));
+    detailTitle: b.title,
+    details: [
+      { label: "Tipo", value: "Hora bloqueada" },
+      { label: "Día", value: DAYS[b.dayOfWeek] },
+      { label: "Horario", value: fmtRange(b.startHour, b.endHour) },
+    ],
+  })), [teacherBlocks]);
 
   const assignmentBlocks: WeekBlock[] = useMemo(() => {
     const collectiveGroups = new Map<string, Assignment[]>();
@@ -162,35 +228,64 @@ export default function DashboardClient() {
       }
     }
 
-    const blocks: WeekBlock[] = individual.map((a) => ({
-      id: a.id,
-      dayOfWeek: a.dayOfWeek,
-      startHour: a.startHour,
-      endHour: a.endHour,
-      title: `${a.subject?.name ?? subjectNames[a.subjectId] ?? "Asignatura"} — ${a.student?.name ?? `#${a.studentId}`}`,
-      subtitle: undefined,
-      color: subjectColor[a.subjectId] ?? "#2563eb",
-    }));
+    const blocks: WeekBlock[] = individual.map((a) => {
+      const subj = subjects.find((s) => s.id === a.subjectId);
+      const dur = subj ? resolveMemberDurationMin(subj, memberFor(a.subjectId, a.studentId)) : null;
+      const subjectName = a.subject?.name ?? subjectNames[a.subjectId] ?? "Asignatura";
+      const studentName = a.student?.name ?? `#${a.studentId}`;
+      return {
+        id: a.id,
+        dayOfWeek: a.dayOfWeek,
+        startHour: a.startHour,
+        endHour: a.endHour,
+        title: `${subjectName} — ${studentName}`,
+        subtitle: undefined,
+        color: subjectColor[a.subjectId] ?? "#2563eb",
+        detailTitle: subjectName,
+        details: [
+          { label: "Alumno", value: studentName },
+          { label: "Día", value: DAYS[a.dayOfWeek] },
+          { label: "Horario", value: fmtRange(a.startHour, a.endHour) },
+          ...(dur != null ? [{ label: "Duración", value: fmtDurationMin(dur) }] : []),
+        ],
+      };
+    });
 
     for (const [, group] of collectiveGroups) {
       const first = group[0];
+      const subj = subjects.find((s) => s.id === first.subjectId);
       const names = group.map((a) => a.student?.name ?? `#${a.studentId}`).join(", ");
+      const subjectName = first.subject?.name ?? subjectNames[first.subjectId] ?? "Asignatura";
       blocks.push({
         id: first.id,
         dayOfWeek: first.dayOfWeek,
         startHour: first.startHour,
         endHour: first.endHour,
-        title: `${first.subject?.name ?? subjectNames[first.subjectId] ?? "Asignatura"} (colectiva)`,
+        title: `${subjectName} (colectiva)`,
         subtitle: `${group.length} alumno(s): ${names}`,
         color: subjectColor[first.subjectId] ?? "#2563eb",
+        detailTitle: `${subjectName} (colectiva)`,
+        details: [
+          { label: "Alumnos", value: names },
+          { label: "Día", value: DAYS[first.dayOfWeek] },
+          { label: "Horario", value: fmtRange(first.startHour, first.endHour) },
+          ...(subj ? [{ label: "Duración", value: fmtDurationMin(subj.defaultDurationMin) }] : []),
+        ],
       });
     }
 
     return blocks;
-  }, [assignments, subjectColor, subjectNames]);
+  }, [assignments, subjectColor, subjectNames, subjects, subjectStudents]);
 
-  const blocks: WeekBlock[] = [...blockBlocks, ...assignmentBlocks];
-  const legend = subjects.map((s) => ({ label: s.name, color: subjectColor[s.id] ?? "#2563eb" }));
+  const blocks: WeekBlock[] = useMemo(
+    () => [...blockBlocks, ...assignmentBlocks],
+    [blockBlocks, assignmentBlocks],
+  );
+
+  const legend = useMemo(
+    () => subjects.map((s) => ({ label: s.name, color: subjectColor[s.id] ?? "#2563eb" })),
+    [subjects, subjectColor],
+  );
 
   async function autoScheduleSubjects(subjectIds?: number[]) {
     setBusy(true); setAutoResult(null);
@@ -213,6 +308,7 @@ export default function DashboardClient() {
     const target = selectedCollectiveSession?.[0] ?? selectedAssignment;
     if (!target) return;
     const res = await fetch(`/api/assignments?id=${target.id}`, { method: "DELETE" });
+    setConfirmDeleteAsg(false);
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       toast("error", d.error || "Error al borrar");
@@ -221,94 +317,167 @@ export default function DashboardClient() {
     }
     setSelectedAssignment(null);
     setSelectedCollectiveSession(null);
+    invalidate("/api/assignments");
     await load();
   }
 
-  async function submitAv(): Promise<boolean> {
-    if (aStart === "" || aEnd === "") return false;
-    if (!(Number(aEnd) > Number(aStart))) {
-      toast("error", "La hora de fin debe ser posterior a la de inicio");
-      return false;
+  async function saveAvailabilityBatch(ranges: TimeRange[]) {
+    const blocked = teacherBlocks.map((b) => ({
+      day: b.dayOfWeek,
+      start: b.startHour,
+      end: b.endHour,
+    }));
+    const conflict = firstAvailabilityBlockedConflict(ranges, blocked);
+    if (conflict) {
+      return toast("error", `La franja choca con un bloqueo existente`);
     }
-    const res = await fetch("/api/availabilities", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dayOfWeek: Number(aDay), startHour: Number(aStart), endHour: Number(aEnd) }),
-    });
-    if (!res.ok) {
-      toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-      return false;
+    setBusy(true);
+    let saved = 0;
+    for (const r of ranges) {
+      const res = await fetch("/api/availabilities", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dayOfWeek: r.day, startHour: r.start, endHour: r.end }),
+      });
+      if (!res.ok) {
+        setBusy(false);
+        toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+        if (saved > 0) {
+          invalidate("/api/availabilities");
+          await load();
+        }
+        return;
+      }
+      saved++;
     }
-    toast("success", "Disponibilidad añadida");
-    setAvOpen(false);
-    setAStart(""); setAEnd("");
+    setBusy(false);
+    toast("success", saved === 1 ? "Disponibilidad añadida" : `${saved} franjas añadidas`);
     invalidate("/api/availabilities");
     await load();
-    return true;
   }
 
-  async function handleAvOpenChange(o: boolean) {
-    if (!o) {
-      if (aStart !== "" && aEnd !== "") await submitAv();
-      else setAvOpen(false);
-      return;
+  async function saveBlockBatch(days: number[], start: number, end: number, title: string) {
+    setBusy(true);
+    let saved = 0;
+    for (const day of days) {
+      const dup = teacherBlocks.some(
+        (b) => b.dayOfWeek === day && end > b.startHour && start < b.endHour
+      );
+      if (dup) continue;
+      const res = await fetch("/api/teacher_blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title || "Bloqueado",
+          dayOfWeek: day,
+          startHour: start,
+          endHour: end,
+        }),
+      });
+      if (!res.ok) {
+        setBusy(false);
+        return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+      }
+      saved++;
     }
-    setAvOpen(true);
+    setBusy(false);
+    if (saved === 0) return toast("error", "Esas horas ya estaban bloqueadas");
+    toast("success", saved === 1 ? "Hora bloqueada" : `${saved} bloqueos añadidos`);
+    invalidate("/api/teacher_blocks");
+    await load();
   }
 
-  async function submitTb() {
-    if (tbStart === "" || tbEnd === "") return toast("error", "Rellena las horas");
-    if (!(Number(tbEnd) > Number(tbStart))) return toast("error", "La hora de fin debe ser posterior");
-    const res = await fetch("/api/teacher_blocks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: tbTitle.trim() || "Bloqueado", dayOfWeek: Number(tbDay), startHour: Number(tbStart), endHour: Number(tbEnd) }),
-    });
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    toast("success", "Reserva agregada");
-    setTbOpen(false);
+  async function removeAvailability(id: number) {
+    const res = await fetch(`/api/availabilities?id=${id}`, { method: "DELETE" });
+    if (!res.ok) return toast("error", "No se pudo quitar la franja");
+    toast("success", "Franja quitada");
+    invalidate("/api/availabilities");
+    await load();
+  }
+
+  async function removeBlock(id: number) {
+    const res = await fetch(`/api/teacher_blocks?id=${id}`, { method: "DELETE" });
+    if (!res.ok) return toast("error", "No se pudo quitar");
+    toast("success", "Bloqueo quitado");
+    invalidate("/api/teacher_blocks");
     await load();
   }
 
   async function confirmDeleteTb() {
     if (!confirmTb) return;
-    const res = await fetch(`/api/teacher_blocks?id=${confirmTb.id}`, { method: "DELETE" });
+    await removeBlock(confirmTb.id);
     setConfirmTb(null);
-    if (!res.ok) return toast("error", "No se pudo quitar");
-    toast("success", "Bloqueo quitado");
-    await load();
   }
 
   useEffect(() => {
     const target = selectedCollectiveSession?.[0] ?? selectedAssignment;
-    if (target) {
-      setEditAsgDay(String(target.dayOfWeek));
-      setEditAsgStart(String(target.startHour));
-      if (selectedCollectiveSession) {
-        const subj = subjects.find((s) => s.id === target.subjectId);
-        const dur = subj?.defaultDurationMin ?? Math.round((target.endHour - target.startHour) * 60);
-        setEditAsgEnd(String(endHourFromDuration(target.startHour, dur)));
-      } else {
-        setEditAsgEnd(String(target.endHour));
-      }
+    if (!target) return;
+    const dur = assignmentDurationMin(target, selectedCollectiveSession);
+    const day = String(target.dayOfWeek);
+    const slotStudents = studentsForAssignment(target, selectedCollectiveSession).map((st) => ({
+      available: normalizeRanges(st.availableRanges),
+      blocked: normalizeRanges(st.blockedRanges),
+    }));
+    const ranges = getAssignmentEffectiveRanges(target.dayOfWeek, availabilities, slotStudents);
+    const { startSet } = getSlotHourSetsFromRanges(
+      ranges,
+      HOURS_START,
+      HOURS_END,
+      String(target.startHour),
+      dur ?? undefined,
+    );
+    const start = startSet.has(String(target.startHour))
+      ? String(target.startHour)
+      : Array.from(startSet)[0] ?? String(target.startHour);
+    setEditAsgDay(day);
+    setEditAsgStart(start);
+    if (dur != null) {
+      setEditAsgEnd(String(endHourFromDuration(Number(start), dur)));
+    } else {
+      setEditAsgEnd(String(target.endHour));
     }
-  }, [selectedAssignment, selectedCollectiveSession, subjects]);
+  }, [selectedAssignment, selectedCollectiveSession, subjects, subjectStudents, availabilities, students]);
 
   useEffect(() => {
-    if (!selectedCollectiveSession?.[0]) return;
-    const target = selectedCollectiveSession[0];
-    const subj = subjects.find((s) => s.id === target.subjectId);
-    if (!subj || editAsgStart === "") return;
-    setEditAsgEnd(String(endHourFromDuration(Number(editAsgStart), subj.defaultDurationMin)));
-  }, [editAsgStart, selectedCollectiveSession, subjects]);
+    const target = selectedCollectiveSession?.[0] ?? selectedAssignment;
+    if (!target || editAsgStart === "") return;
+    const dur = assignmentDurationMin(target, selectedCollectiveSession);
+    if (dur == null) return;
+    setEditAsgEnd(String(endHourFromDuration(Number(editAsgStart), dur)));
+  }, [editAsgStart, selectedAssignment, selectedCollectiveSession, subjects, subjectStudents]);
+
+  useEffect(() => {
+    if (!editTarget || editHourSets.startSet.size === 0) return;
+    if (!editHourSets.startSet.has(editAsgStart)) {
+      setEditAsgStart(Array.from(editHourSets.startSet)[0]);
+    }
+  }, [editAsgDay, editTarget, editHourSets.startSet, editAsgStart]);
 
   async function saveEditAsg() {
     const target = selectedCollectiveSession?.[0] ?? selectedAssignment;
     if (!target) return;
-    const body: Record<string, number> = { id: target.id };
     const day = Number(editAsgDay);
     const start = Number(editAsgStart);
     const end = Number(editAsgEnd);
+    const slotStudents = studentsForAssignment(target, selectedCollectiveSession);
+    const slotErr = (() => {
+      for (const st of slotStudents) {
+        const err = validateSlotRequest({
+          day,
+          start,
+          end,
+          teacherAvails: availabilities,
+          studentAvailable: normalizeRanges(st.availableRanges),
+          studentBlocked: normalizeRanges(st.blockedRanges),
+          requiredDurationMin: editDurationMin ?? undefined,
+        });
+        if (err) return st.name ? `${st.name}: ${err}` : err;
+      }
+      return null;
+    })();
+    if (slotErr) return toast("error", slotErr);
+
+    const body: Record<string, number> = { id: target.id };
     if (day !== target.dayOfWeek) body.dayOfWeek = day;
     if (start !== target.startHour) body.startHour = start;
     if (end !== target.endHour) body.endHour = end;
@@ -326,6 +495,7 @@ export default function DashboardClient() {
     toast("success", selectedCollectiveSession ? "Sesión colectiva movida" : "Clase movida");
     setSelectedAssignment(null);
     setSelectedCollectiveSession(null);
+    invalidate("/api/assignments");
     await load();
   }
 
@@ -333,8 +503,34 @@ export default function DashboardClient() {
     <div className="space-y-5">
       <PageHeader
         icon={Briefcase}
-        title={teacher?.name ?? <Skeleton className="inline-block h-7 w-40 align-middle" />}
+        title={loading ? <Skeleton className="inline-block h-7 w-40 align-middle" /> : (teacher?.name ?? "—")}
         description="Tu horario semanal — clases, disponibilidad y reservas."
+        actions={
+          <>
+            <Button variant="outline" onClick={() => setManageOpen(true)}>
+              <CalendarClock size={16} />
+              <span className="sm:hidden">Horario</span>
+              <span className="hidden sm:inline">Gestionar horario</span>
+            </Button>
+            {!loading && !teacher?.scheduleFixed && (
+              <Button
+                onClick={() => autoScheduleSubjects()}
+                disabled={busy || loading}
+                title="Auto-agenda todas las asignaturas no fijadas"
+              >
+                {busy ? (
+                  <><Play size={16} /> Ejecutando…</>
+                ) : (
+                  <>
+                    <Sparkles size={16} />
+                    <span className="sm:hidden">Auto-agendar</span>
+                    <span className="hidden sm:inline">Auto-agendar todo</span>
+                  </>
+                )}
+              </Button>
+            )}
+          </>
+        }
       />
 
       <AutoScheduleResultDialog
@@ -342,26 +538,6 @@ export default function DashboardClient() {
         onClose={() => setAutoResult(null)}
         subjectColors={subjectColor}
       />
-
-      <div className="flex gap-2 overflow-x-auto pb-1 mb-3 sm:flex-wrap sm:overflow-visible scrollbar-none [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <Button size="sm" variant="outline" className="shrink-0 sm:w-auto justify-center" onClick={() => { setADay("0"); setAStart(""); setAEnd(""); setAvOpen(true); }}>
-          <Plus size={14} /> <span className="sm:hidden">Disponibilidad</span><span className="hidden sm:inline">Añadir disponibilidad</span>
-        </Button>
-        <Button size="sm" variant="outline" className="shrink-0 sm:w-auto justify-center" onClick={() => { setTbTitle(""); setTbDay("0"); setTbStart("16"); setTbEnd("17"); setTbOpen(true); }}>
-          <CalendarPlus size={14} /> <span className="sm:hidden">Reserva</span><span className="hidden sm:inline">Agregar reserva de hora</span>
-        </Button>
-        {!teacher?.scheduleFixed && (
-          <Button
-            size="sm"
-            className="shrink-0 sm:w-auto justify-center"
-            onClick={() => autoScheduleSubjects()}
-            disabled={busy || loading}
-            title="Auto-agenda todas las asignaturas no fijadas"
-          >
-            {busy ? <><Play size={14} /> Ejecutando…</> : <><Sparkles size={14} /> <span className="sm:hidden">Auto-agendar</span><span className="hidden sm:inline">Auto-agendar todo</span></>}
-          </Button>
-        )}
-      </div>
 
       {loading ? (
         <WeekGridSkeleton />
@@ -397,18 +573,19 @@ export default function DashboardClient() {
       <Dialog open={selectedAssignment != null || selectedCollectiveSession != null} onOpenChange={(o) => { if (!o) { setSelectedAssignment(null); setSelectedCollectiveSession(null); } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{selectedCollectiveSession ? "Sesión colectiva" : "Detalle de asignación"}</DialogTitle>
+            <DialogTitle>
+              {selectedCollectiveSession ? "Sesión colectiva" : "Detalle de asignación"}
+            </DialogTitle>
           </DialogHeader>
           {(selectedAssignment || selectedCollectiveSession) && (() => {
             const target = selectedCollectiveSession?.[0] ?? selectedAssignment!;
-            const subj = subjects.find((s) => s.id === target.subjectId);
-            const collectiveDur = subj?.defaultDurationMin;
+            const dur = assignmentDurationMin(target, selectedCollectiveSession);
             return (
             <div className="space-y-3 text-sm">
               <dl className="space-y-2">
                 <div className="flex justify-between gap-2"><dt className="text-gray-500 shrink-0">Asignatura</dt><dd className="font-medium text-right truncate max-w-[58%]">{target.subject?.name ?? `#${target.subjectId}`}</dd></div>
-                {selectedCollectiveSession && collectiveDur != null && (
-                  <div className="flex justify-between"><dt className="text-gray-500">Duración</dt><dd className="font-medium">{fmtDurationMin(collectiveDur)}</dd></div>
+                {dur != null && (
+                  <div className="flex justify-between"><dt className="text-gray-500">Duración</dt><dd className="font-medium">{fmtDurationMin(dur)}</dd></div>
                 )}
                 {selectedCollectiveSession ? (
                   <div>
@@ -422,7 +599,6 @@ export default function DashboardClient() {
                 ) : (
                   <div className="flex justify-between gap-2"><dt className="text-gray-500 shrink-0">Alumno</dt><dd className="font-medium text-right truncate max-w-[58%]">{target.student?.name ?? `#${target.studentId}`}</dd></div>
                 )}
-                <div className="flex justify-between"><dt className="text-gray-500">Origen</dt><dd><Badge variant={target.origin === "auto" ? "success" : "gray"}>{target.origin}</Badge></dd></div>
               </dl>
               <div className="divider" />
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -440,130 +616,101 @@ export default function DashboardClient() {
                   <Select value={editAsgStart} onValueChange={setEditAsgStart}>
                     <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                     <SelectContent>
-                      {HOURS_START.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                      {HOURS_START.map((o) => hourItem(o, editHourSets.startSet))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div>
                   <Label htmlFor="tb-3">Hora de fin</Label>
-                  {selectedCollectiveSession ? (
-                    <div className="flex h-9 items-center rounded-md border border-gray-200 bg-gray-50 px-3 text-sm tabular-nums">
-                      {editAsgEnd !== "" ? fmtHour(editAsgEnd) : "—"}
-                    </div>
-                  ) : (
-                    <Select value={editAsgEnd} onValueChange={setEditAsgEnd}>
-                      <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                      <SelectContent>
-                        {HOURS_END.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  )}
+                  <div className="flex h-9 items-center rounded-md border border-gray-200 bg-gray-50 px-3 text-sm tabular-nums">
+                    {editAsgEnd !== "" ? fmtHour(editAsgEnd) : "—"}
+                  </div>
                 </div>
               </div>
-              {selectedCollectiveSession && (
-                <p className="text-xs text-gray-500">La hora de fin se calcula automáticamente según la duración de la asignatura ({collectiveDur != null ? fmtDurationMin(collectiveDur) : "—"}). Al mover o borrar, se aplica a todos los alumnos.</p>
+              {editHourSets.startSet.size === 0 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                  No hay franjas disponibles en común entre tu horario y el del alumno para este día.
+                </p>
+              )}
+              {dur != null && (
+                <p className="text-xs text-gray-500">
+                  La hora de fin se calcula según la duración de la asignatura para {selectedCollectiveSession ? "la sesión colectiva" : "este alumno"} ({fmtDurationMin(dur)}).
+                  {selectedCollectiveSession ? " Al mover o borrar, se aplica a todos los alumnos." : ""}
+                </p>
               )}
             </div>
             );
           })()}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setSelectedAssignment(null); setSelectedCollectiveSession(null); }}>Cerrar</Button>
-            <Button onClick={saveEditAsg}><Save size={14} /> Guardar</Button>
-            <Button variant="destructiveSolid" onClick={deleteAssignment}><Trash2 size={14} /> Borrar</Button>
-          </DialogFooter>
+          <div className="mt-5 border-t border-gray-100 pt-4">
+            <Button
+              className="w-full"
+              onClick={saveEditAsg}
+              disabled={editHourSets.startSet.size === 0}
+            >
+              <Save size={14} /> Guardar cambios
+            </Button>
+            <div className="mt-5 flex justify-center border-t border-dashed border-gray-200 pt-4">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteAsg(true)}
+                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors"
+              >
+                <Trash2 size={13} aria-hidden />
+                {selectedCollectiveSession ? "Eliminar sesión colectiva" : "Eliminar asignación"}
+              </button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={avOpen} onOpenChange={handleAvOpenChange}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Añadir disponibilidad</DialogTitle>
-            <p className="text-sm text-gray-500">Al cerrar se guarda automáticamente si las horas están completas.</p>
-          </DialogHeader>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <Label htmlFor="az-0">Día</Label>
-              <Select value={aDay} onValueChange={setADay}>
-                <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                <SelectContent>
-                  {DAYS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="az-1">Hora de inicio</Label>
-              <Select value={aStart} onValueChange={setAStart}>
-                <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                <SelectContent>
-                  {HOURS_START.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="az-2">Hora de fin</Label>
-              <Select value={aEnd} onValueChange={setAEnd}>
-                <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                <SelectContent>
-                  {HOURS_END.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button onClick={() => handleAvOpenChange(false)}><Save size={14} /> Guardar y cerrar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TeacherScheduleManageDialog
+        open={manageOpen}
+        onOpenChange={setManageOpen}
+        availabilities={availabilities}
+        teacherBlocks={teacherBlocks}
+        saving={busy}
+        onSaveAvailability={saveAvailabilityBatch}
+        onSaveBlock={saveBlockBatch}
+        onRemoveAvailability={removeAvailability}
+        onRemoveBlock={removeBlock}
+      />
 
-      <Dialog open={tbOpen} onOpenChange={(o) => { if (!o) setTbOpen(false); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Agregar reserva de hora</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-xs text-gray-500">
-              Reserva horas para otras cosas (clases particulares de otro tipo, reuniones, comidas…). El auto-agendado no pondrá clases ahí.
-            </p>
-            <div>
-              <Label>¿Qué es? (opcional)</Label>
-              <input className="input" type="text" value={tbTitle} onChange={(e) => setTbTitle(e.target.value)} placeholder="Ej: Reunión de departamento" />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <Label>Día</Label>
-                <Select value={tbDay} onValueChange={setTbDay}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                  <SelectContent>
-                    {DAYS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Hora de inicio</Label>
-                <Select value={tbStart} onValueChange={setTbStart}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                  <SelectContent>
-                    {HOURS_START.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Hora de fin</Label>
-                <Select value={tbEnd} onValueChange={setTbEnd}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                  <SelectContent>
-                    {HOURS_END.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setTbOpen(false)}><X size={14} /> Cancelar</Button>
-            <Button onClick={submitTb}><Save size={14} /> Guardar reserva</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AlertDialog open={confirmDeleteAsg} onOpenChange={setConfirmDeleteAsg}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {selectedCollectiveSession ? "Eliminar sesión colectiva" : "Eliminar asignación"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {(() => {
+                const target = selectedCollectiveSession?.[0] ?? selectedAssignment;
+                if (!target) return null;
+                const slot = `${DAYS[target.dayOfWeek]} ${fmtRange(target.startHour, target.endHour)}`;
+                const subjectName = target.subject?.name ?? `#${target.subjectId}`;
+                if (selectedCollectiveSession) {
+                  return (
+                    <>
+                      ¿Eliminar la sesión colectiva de <strong>{subjectName}</strong> el {slot}?
+                      Se quitarán <strong>{selectedCollectiveSession.length}</strong> alumno
+                      {selectedCollectiveSession.length !== 1 ? "s" : ""} de esta sesión.
+                    </>
+                  );
+                }
+                const studentName = target.student?.name ?? `#${target.studentId}`;
+                return (
+                  <>
+                    ¿Eliminar la clase de <strong>{subjectName}</strong> con <strong>{studentName}</strong> el {slot}?
+                  </>
+                );
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={deleteAssignment}>Eliminar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmTb != null} onOpenChange={(o) => { if (!o) setConfirmTb(null); }}>
         <AlertDialogContent>

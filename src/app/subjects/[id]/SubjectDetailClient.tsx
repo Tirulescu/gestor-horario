@@ -25,12 +25,12 @@ import { DragHandle } from "@/components/DragHandle";
 import { useToast } from "@/components/Toast";
 import { Switch } from "@/components/ui/switch";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
-import { DAYS } from "@/lib/validate";
-import { fmtRange, hourOptions, fmtDurationMin } from "@/lib/hours";
-import { invalidate, invalidateMany } from "@/lib/clientCache";
-import { getSlotHourSets, normalizeRanges, snapSlotHours, validateSlotRequest, type TimeRange } from "@/lib/studentAvailability";
+import { fmtDurationMin, collectSubjectDurationOptions } from "@/lib/hours";
+import SubjectDurationBadges from "@/components/SubjectDurationBadges";
+import { invalidate, invalidateMany, put } from "@/lib/clientCache";
+import { COPY } from "@/lib/copy";
 
-interface Student { id: number; name: string; availableRanges?: TimeRange[]; blockedRanges?: TimeRange[]; }
+interface Student { id: number; name: string; grade?: string | null; }
 interface Subject { id: number; name: string; teacherId: number; defaultDurationMin: number; isCollective?: boolean; scheduleFixed?: boolean; teacher?: { name: string; scheduleFixed?: boolean }; }
 interface SubjectStudent {
   id: number; subjectId: number; studentId: number;
@@ -42,10 +42,13 @@ interface SlotRequest {
   dayOfWeek: number; startHour: number; endHour: number;
   prefOrder: number; status: string;
 }
-interface Availability { id: number; dayOfWeek: number; startHour: number; endHour: number; }
+interface GradeDuration {
+  id: number; subjectId: number; grade: string;
+  durationMin: number; slotsRequired: number;
+}
 type ConfirmTarget =
   | { kind: "member"; id: number; label: string }
-  | { kind: "slot"; id: number; label: string }
+  | { kind: "gradeRule"; id: number; label: string }
   | null;
 
 function MemberRow({ m, children, className }: {
@@ -75,28 +78,6 @@ function MemberRow({ m, children, className }: {
 }
 
 
-function SlotRowItem({ r, children }: { r: SlotRequest; children: React.ReactNode }) {
-  const controls = useDragControls();
-  return (
-    <Reorder.Item
-      value={r}
-      layout
-      dragListener={false}
-      dragControls={controls}
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, x: -8 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-      whileDrag={{ scale: 1.02, boxShadow: "0 8px 24px rgb(0 0 0 / 0.12)", zIndex: 20 }}
-      className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5 text-sm bg-gray-50 rounded-lg px-2 py-2"
-    >
-      <DragHandle controls={controls} size={14} />
-      {children}
-    </Reorder.Item>
-  );
-}
-
-
 export default function SubjectDetailClient({ id }: { id: number }) {
   const toast = useToast();
   const [subject, setSubject] = useState<Subject | null>(null);
@@ -104,7 +85,6 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [members, setMembers] = useState<SubjectStudent[]>([]);
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([]);
-  const [availabilities, setAvailabilities] = useState<Availability[]>([]);
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget>(null);
   const [busy, setBusy] = useState(false);
   const [autoResult, setAutoResult] = useState<AutoScheduleResult | null>(null);
@@ -116,75 +96,43 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [newDurationMin, setNewDurationMin] = useState("");
   const nextPriorityRef = useRef<number | null>(null);
 
+  // grade modal
+  const [gradeOpen, setGradeOpen] = useState(false);
+  const [newGrade, setNewGrade] = useState("");
+  const [gradeDurationMin, setGradeDurationMin] = useState("30");
+  const [gradeSlotsRequired, setGradeSlotsRequired] = useState("1");
+  const [gradeDurations, setGradeDurations] = useState<GradeDuration[]>([]);
+  const [teacherScheduleFixed, setTeacherScheduleFixed] = useState(false);
+
   // edit member modal
   const [editMember, setEditMember] = useState<SubjectStudent | null>(null);
   const [editDuration, setEditDuration] = useState("");
-  const [editPriority, setEditPriority] = useState("1");
   const [editSlots, setEditSlots] = useState("1");
-
-  // slot request modal
-  const [srOpen, setSrOpen] = useState(false);
-  const [srStudent, setSrStudent] = useState("");
-  const [srDay, setSrDay] = useState("0");
-  const [srStart, setSrStart] = useState("");
-  const [srEnd, setSrEnd] = useState("");
-  const HOURS_START = hourOptions(8, 23);
-  const HOURS_END = hourOptions(9, 24);
-
-  function hourItem(o: { value: string; label: string }, allowed: Set<string>) {
-    if (!allowed.has(o.value)) return null;
-    return (
-      <SelectItem key={o.value} value={o.value}>
-        {o.label}
-      </SelectItem>
-    );
-  }
-
-  const srHourSets = useMemo(
-    () =>
-      getSlotHourSets(
-        Number(srDay),
-        availabilities,
-        normalizeRanges(allStudents.find((s) => String(s.id) === srStudent)?.availableRanges),
-        normalizeRanges(allStudents.find((s) => String(s.id) === srStudent)?.blockedRanges),
-        HOURS_START,
-        HOURS_END,
-        srStart
-      ),
-    [availabilities, srDay, srStudent, srStart, allStudents]
-  );
-
-  useEffect(() => {
-    if (!srOpen || !srStudent) return;
-    const st = allStudents.find((s) => String(s.id) === srStudent);
-    const snapped = snapSlotHours(
-      Number(srDay),
-      availabilities,
-      normalizeRanges(st?.availableRanges),
-      normalizeRanges(st?.blockedRanges),
-      HOURS_START,
-      HOURS_END,
-      srStart,
-      srEnd
-    );
-    if (snapped.start !== srStart) setSrStart(snapped.start);
-    if (snapped.end !== srEnd) setSrEnd(snapped.end);
-  }, [srOpen, srStudent, srDay, availabilities, allStudents]);
 
   async function load() {
     try {
-      const [s, ss, st, sr] = await Promise.all([
-        fetch("/api/subjects").then((r) => r.json()).then((arr: Subject[]) => arr.find((x) => x.id === id) ?? null),
-        fetch(`/api/subject_students?subjectId=${id}`).then((r) => r.json()) as Promise<SubjectStudent[]>,
-        fetch("/api/students").then((r) => r.json()),
-        fetch(`/api/slot_requests?subjectId=${id}`).then((r) => r.json()) as Promise<SlotRequest[]>,
+      const [allSubjects, ssAll, st, srAll, gd, teachers] = await Promise.all([
+        fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
+        fetch("/api/subject_students").then((r) => r.json()) as Promise<SubjectStudent[]>,
+        fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
+        fetch("/api/slot_requests").then((r) => r.json()) as Promise<SlotRequest[]>,
+        fetch(`/api/subject_grade_durations?subjectId=${id}`).then((r) => r.json()) as Promise<GradeDuration[]>,
+        fetch("/api/teachers").then((r) => r.json()) as Promise<{ scheduleFixed?: boolean }[]>,
       ]);
-      const av = s ? (await fetch("/api/availabilities").then((r) => r.json())) as Availability[] : [];
+      const s = allSubjects.find((x) => x.id === id) ?? null;
+      const ss = ssAll.filter((x) => x.subjectId === id);
+      const sr = srAll.filter((x) => x.subjectId === id);
       setSubject(s);
       setMembers(ss);
       setAllStudents(st);
       setSlotRequests(sr);
-      setAvailabilities(av);
+      setGradeDurations(gd);
+      setTeacherScheduleFixed(Boolean(teachers[0]?.scheduleFixed));
+      put("/api/subjects", allSubjects);
+      put("/api/subject_students", ssAll);
+      put("/api/students", st);
+      put("/api/slot_requests", srAll);
+      put("/api/teachers", teachers);
     } finally {
       setLoading(false);
     }
@@ -203,26 +151,10 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     return m;
   }, [slotRequests]);
 
-  const nameOf = (sid: number) => allStudents.find((x) => x.id === sid)?.name ?? `#${sid}`;
-
   const sortedMembers = useMemo(
     () => [...members].sort((a, b) => a.priority - b.priority || a.id - b.id),
     [members]
   );
-
-  function srIssue(): string {
-    if (srStart === "" || srEnd === "") return "";
-    const st = allStudents.find((s) => String(s.id) === srStudent);
-    return validateSlotRequest({
-      day: Number(srDay),
-      start: Number(srStart),
-      end: Number(srEnd),
-      teacherAvails: availabilities,
-      studentAvailable: normalizeRanges(st?.availableRanges),
-      studentBlocked: normalizeRanges(st?.blockedRanges),
-    }) ?? "";
-  }
-  const srError = srIssue();
 
   function openAddMember() {
     // La prioridad se asigna sola: el nuevo alumno queda el ULTIMO de la fila.
@@ -257,24 +189,21 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   function openEditMember(m: SubjectStudent) {
     setEditMember(m);
     setEditDuration(m.durationMin == null ? "" : String(m.durationMin));
-    setEditPriority(String(m.priority));
     setEditSlots(String(m.slotsRequired));
   }
 
   async function submitEditMember() {
     if (!editMember) return;
     const durationMin = editDuration.trim() === "" ? null : Number(editDuration);
-    const priority = Number(editPriority);
     const slotsRequired = Number(editSlots);
     if (
-      priority === editMember.priority &&
       slotsRequired === editMember.slotsRequired &&
       durationMin === editMember.durationMin
     ) {
       setEditMember(null);
       return;
     }
-    const patch: Record<string, unknown> = { priority, slotsRequired, durationMin };
+    const patch: Record<string, unknown> = { slotsRequired, durationMin };
     const res = await fetch("/api/subject_students", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -283,6 +212,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     toast("success", "Alumno actualizado");
     setEditMember(null);
+    invalidate("/api/subject_students");
     await load();
   }
 
@@ -295,54 +225,8 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     });
     setBusy(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    invalidate("/api/subject_students");
     await load();
-  }
-
-  async function moveSlotTo(slotId: number, to: number) {
-    setBusy(true);
-    const res = await fetch("/api/slot_requests", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: slotId, to }),
-    });
-    setBusy(false);
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    await load();
-  }
-
-  const pendingSync = useRef<{ id: number; to: number }[]>([]);
-  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function handleReorder(next: SlotRequest[], studentId: number) {
-    const prev = (requestsByStudent[studentId] ?? []).slice().sort((a, b) => a.prefOrder - b.prefOrder || a.id - b.id);
-    const moved = prev.find((x, i) => next[i]?.id !== x.id);
-    setSlotRequests((cur) =>
-      cur.map((r) => {
-        if (r.studentId !== studentId) return r;
-        const ni = next.findIndex((x) => x.id === r.id);
-        return ni >= 0 ? { ...r, prefOrder: ni + 1 } : r;
-      })
-    );
-    if (!moved) return;
-    const to = next.findIndex((x) => x.id === moved.id) + 1;
-    if (to < 1) return;
-    pendingSync.current = pendingSync.current.filter((p) => p.id !== moved.id);
-    pendingSync.current.push({ id: moved.id, to });
-    if (syncTimer.current) clearTimeout(syncTimer.current);
-    syncTimer.current = setTimeout(() => {
-      const items = [...pendingSync.current];
-      pendingSync.current = [];
-      void (async () => {
-        for (const p of items) {
-          await fetch("/api/slot_requests", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: p.id, to: p.to }),
-          });
-        }
-        await load();
-      })();
-    }, 400);
   }
 
   const memberSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -366,66 +250,100 @@ export default function SubjectDetailClient({ id }: { id: number }) {
           });
         }
       }
+      invalidate("/api/subject_students");
       await load();
     }, 400);
   }
 
-  async function moveSlot(slotId: number, dir: "up" | "down") {
-    setBusy(true);
-    const res = await fetch("/api/slot_requests", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: slotId, dir }),
-    });
-    setBusy(false);
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    await load();
-  }
-
   async function confirmDelete() {
     if (!confirmTarget) return;
-    let res: Response;
-    let label = "";
     if (confirmTarget.kind === "member") {
-      res = await fetch(`/api/subject_students?id=${confirmTarget.id}`, { method: "DELETE" });
-      label = "Alumno quitado";
+      const res = await fetch(`/api/subject_students?id=${confirmTarget.id}`, { method: "DELETE" });
+      setConfirmTarget(null);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        toast("error", d.error || "Error al borrar");
+      } else {
+        toast("success", "Alumno quitado");
+      }
     } else {
-      res = await fetch(`/api/slot_requests?id=${confirmTarget.id}`, { method: "DELETE" });
-      label = "Posibilidad borrada";
+      const res = await fetch(`/api/subject_grade_durations?id=${confirmTarget.id}`, { method: "DELETE" });
+      setConfirmTarget(null);
+      if (!res.ok) {
+        toast("error", (await res.json().catch(() => ({}))).error || "No se pudo borrar");
+      } else {
+        toast("success", "Regla de curso eliminada");
+      }
     }
-    setConfirmTarget(null);
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      toast("error", d.error || "Error al borrar");
-    } else {
-      toast("success", label);
-    }
-    await load();
-  }
-
-  async function submitSr() {
-    if (!srStudent) return toast("error", "Selecciona un alumno");
-    if (srError) return toast("error", srError);
-    const res = await fetch("/api/slot_requests", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        studentId: Number(srStudent),
-        subjectId: id,
-        dayOfWeek: Number(srDay),
-        startHour: Number(srStart),
-        endHour: Number(srEnd),
-      }),
-    });
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    toast("success", "Posibilidad añadida");
-    setSrOpen(false);
+    invalidateMany(["/api/subject_students", "/api/subjects"]);
     await load();
   }
 
   const memberIds = new Set(members.map((m) => m.studentId));
   const availableStudents = allStudents.filter((s) => !memberIds.has(s.id));
   const defaultDur = subject?.defaultDurationMin ?? 60;
+  const durationOptions = useMemo(
+    () => (subject ? collectSubjectDurationOptions(subject, members, gradeDurations) : []),
+    [subject, members, gradeDurations],
+  );
+
+  const grades = useMemo(
+    () => Array.from(new Set(allStudents.map((s) => (s.grade ?? "").trim()).filter(Boolean))).sort(),
+    [allStudents],
+  );
+
+  const gradeRuleFor = (grade: string | null | undefined) =>
+    gradeDurations.find((g) => g.grade === (grade ?? "").trim());
+
+  function applyGradeRuleToForm(studentId: string) {
+    const st = allStudents.find((s) => String(s.id) === studentId);
+    const rule = st ? gradeRuleFor(st.grade) : undefined;
+    if (rule) {
+      setNewDurationMin(String(rule.durationMin));
+      setNewSlotsRequired(String(rule.slotsRequired));
+    } else {
+      setNewDurationMin("");
+      setNewSlotsRequired("1");
+    }
+  }
+
+  function openAddGrade() {
+    setNewGrade("");
+    setGradeDurationMin("30");
+    setGradeSlotsRequired("1");
+    setGradeOpen(true);
+  }
+
+  async function submitGrade() {
+    if (!newGrade) return toast("error", "Selecciona un curso");
+    const durationMin = Number(gradeDurationMin);
+    if (!durationMin || durationMin < 5) return toast("error", "Indica una duración válida");
+    const res = await fetch("/api/subject_grade_durations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subjectId: id,
+        grade: newGrade,
+        durationMin,
+        slotsRequired: Number(gradeSlotsRequired) || 1,
+        enroll: true,
+      }),
+    });
+    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    const data = await res.json();
+    toast("success", `Curso añadido: ${data.enrolled} alumno(s) inscrito(s)${data.skipped ? `, ${data.skipped} ya estaban` : ""}`);
+    setGradeOpen(false);
+    invalidateMany(["/api/subject_students", "/api/subject_grade_durations"]);
+    await load();
+  }
+
+  async function removeGradeRule(ruleId: number, grade: string) {
+    setConfirmTarget({
+      kind: "gradeRule",
+      id: ruleId,
+      label: `¿Eliminar la regla del curso ${grade}? Los alumnos inscritos no se quitarán automáticamente.`,
+    });
+  }
 
   const confirmMessage = confirmTarget ? confirmTarget.label : "";
 
@@ -459,8 +377,8 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     <div className="space-y-6">
       <AutoScheduleResultDialog result={autoResult} onClose={() => setAutoResult(null)} />
       <div className="space-y-3">
-        <Button asChild variant="outline" size="sm">
-          <Link href="/subjects"><ArrowLeft /> Asignaturas</Link>
+        <Button asChild variant="outline">
+          <Link href="/subjects"><ArrowLeft size={16} /> Asignaturas</Link>
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
@@ -470,8 +388,20 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                   <BookOpen className="text-blue-600" /> {subject.name}
                   {subject.isCollective && <Badge variant="success">Colectiva</Badge>}
                 </h1>
-                <p className="text-gray-500 text-sm mt-1">
-                  Sesión de {fmtDurationMin(defaultDur)}
+                <p className="text-gray-500 text-sm mt-1 flex flex-wrap items-center gap-2">
+                  {durationOptions.length === 1 ? (
+                    <>Sesión de {fmtDurationMin(durationOptions[0])}</>
+                  ) : (
+                    <>
+                      <span>Sesiones de</span>
+                      <SubjectDurationBadges
+                        subject={subject}
+                        members={members}
+                        gradeDurations={gradeDurations}
+                        className="font-normal gap-1"
+                      />
+                    </>
+                  )}
                   {subject.isCollective && " · compartida por todos los alumnos inscritos"}
                 </p>
               </>
@@ -481,26 +411,27 @@ export default function SubjectDetailClient({ id }: { id: number }) {
           </div>
           {!loading && (
             <div className="flex flex-wrap gap-2 items-center">
-              {subject && !subject.scheduleFixed && (
+              {!teacherScheduleFixed && subject && !subject.scheduleFixed && (
                 <Button
-                  size="sm"
                   disabled={busy}
                   onClick={autoScheduleSubject}
                 >
-                  <Sparkles size={14} /> Auto-agendar
+                  <Sparkles size={16} /> Auto-agendar
                 </Button>
               )}
-              <div className="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-1.5">
-                <Label htmlFor="subj-fixed" className="text-xs text-gray-600">Fijar horario</Label>
-                <Switch
-                  id="subj-fixed"
-                  checked={Boolean(subject?.scheduleFixed)}
-                  onCheckedChange={toggleScheduleFixed}
-                  disabled={busy || !subject}
-                />
-              </div>
-              <Button asChild size="sm">
-                <Link href="/requests"><ClipboardList /> <span className="hidden sm:inline">Solicitudes de horario</span><span className="sm:hidden">Solicitudes</span></Link>
+              {!teacherScheduleFixed && (
+                <div className="flex items-center gap-2 rounded-lg border border-gray-100 px-3 py-1.5">
+                  <Label htmlFor="subj-fixed" className="text-xs text-gray-600">Fijar horario</Label>
+                  <Switch
+                    id="subj-fixed"
+                    checked={Boolean(subject?.scheduleFixed)}
+                    onCheckedChange={toggleScheduleFixed}
+                    disabled={busy || !subject}
+                  />
+                </div>
+              )}
+              <Button asChild variant="outline">
+                <Link href="/requests"><ClipboardList size={16} /> <span className="hidden sm:inline">Solicitudes</span><span className="sm:hidden">Solicitudes</span></Link>
               </Button>
             </div>
           )}
@@ -511,8 +442,31 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       <Card className="p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold flex items-center gap-2"><GraduationCap size={18} className="text-blue-600" /> Alumnos inscritos</h2>
-          <Button size="sm" onClick={openAddMember}><Plus size={14} /> Añadir alumno</Button>
+          <div className="flex flex-wrap gap-2">
+            {!subject.isCollective && grades.length > 0 && (
+              <Button variant="outline" onClick={openAddGrade}><Plus size={16} /> Añadir curso</Button>
+            )}
+            <Button onClick={openAddMember}><Plus size={16} /> Añadir alumno</Button>
+          </div>
         </div>
+
+        {!subject.isCollective && gradeDurations.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {gradeDurations.map((g) => (
+              <Badge key={g.id} variant="gray" className="gap-1.5 pr-1">
+                {g.grade}: {fmtDurationMin(g.durationMin)} · {g.slotsRequired} solic.
+                <button
+                  type="button"
+                  onClick={() => removeGradeRule(g.id, g.grade)}
+                  className="ml-0.5 rounded hover:bg-gray-200 p-0.5"
+                  aria-label={`Quitar regla de ${g.grade}`}
+                >
+                  <X size={12} />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
         
         {sortedMembers.length === 0 ? (
           <div className="text-gray-500 text-sm">Sin alumnos inscritos</div>
@@ -528,17 +482,19 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                       <Button size="iconSm" variant="ghost" onClick={() => moveMember(m.id, "down")} disabled={busy || mi === sortedMembers.length - 1} aria-label="Bajar prioridad"><ArrowDown size={14} /></Button>
                     </div>
                     <span className="font-medium">{m.student.name}</span>
+                    {m.student.grade && <span className="text-gray-400 text-xs">{m.student.grade}</span>}
                     {!subject.isCollective && (
-                      <span className="text-gray-500 text-xs">Duración: {m.durationMin == null ? <span className="italic">{defaultDur} min</span> : `${m.durationMin} min`}</span>
+                      <span className="text-gray-500 text-xs">Duración: {m.durationMin == null ? <span className="italic">{fmtDurationMin(defaultDur)} (defecto)</span> : fmtDurationMin(m.durationMin)}</span>
                     )}
                     {!subject.isCollective && (
-                      <>
-                        <span className="text-gray-500 text-xs">Pedidas: {m.slotsRequired}</span>
-                        <Badge variant={reqs.length >= m.slotsRequired ? "success" : "warn"}>{reqs.length}/{m.slotsRequired}</Badge>
-                      </>
+                      <Badge
+                        variant={reqs.length >= m.slotsRequired ? "success" : "warn"}
+                      >
+                        {COPY.slotsProgress(reqs.length, m.slotsRequired)}
+                      </Badge>
                     )}
                     {subject.isCollective && reqs.length > 0 && (
-                      <Badge variant="gray">{reqs.length} posibilidad(es)</Badge>
+                      <Badge variant="gray">{reqs.length} solicitud{reqs.length === 1 ? "" : "es"}</Badge>
                     )}
                     <div className="flex gap-1.5 ml-auto">
                       <Button size="iconSm" variant="outline" onClick={() => openEditMember(m)} aria-label="Editar"><Pencil size={14} /></Button>
@@ -549,56 +505,6 @@ export default function SubjectDetailClient({ id }: { id: number }) {
               })}
             </AnimatePresence>
           </Reorder.Group>
-        )}
-      </Card>
-
-      {/* Slot requests (posibilidades) */}
-      <Card className="p-5 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-semibold flex items-center gap-2"><ClipboardList size={18} className="text-blue-600" /> Posibilidades de horario</h2>
-          <Button size="sm" onClick={() => { setSrStudent(""); setSrDay("0"); setSrStart(""); setSrEnd(""); setSrOpen(true); }}>
-            <Plus size={14} /> Añadir posibilidad
-          </Button>
-        </div>
-        {slotRequests.length === 0 ? (
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <p className="text-gray-500 text-sm">Sin posibilidades de horario.</p>
-            <Button asChild size="sm" variant="outline">
-              <Link href="/requests"><ClipboardList /> Gestionar en Solicitudes</Link>
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {sortedMembers.map((m) => {
-              const reqs = requestsByStudent[m.studentId] ?? [];
-              if (reqs.length === 0) return null;
-              return (
-                <div key={m.id} className="space-y-1.5">
-                  <div className="text-sm font-medium text-gray-700">{m.student.name}</div>
-                  <Reorder.Group
-                    axis="y"
-                    values={reqs}
-                    onReorder={(next) => handleReorder(next, m.studentId)}
-                    layoutScroll
-                    className="space-y-1.5 reorder-group"
-                  >
-                    <AnimatePresence initial={false}>
-                      {reqs.map((r, ri) => (
-                        <SlotRowItem key={r.id} r={r}>
-                          <div className="flex items-center gap-1">
-                            <Button size="iconSm" variant="ghost" onClick={() => moveSlot(r.id, "up")} disabled={busy || ri === 0} aria-label="Subir preferencia"><ArrowUp size={12} /></Button>
-                            <Button size="iconSm" variant="ghost" onClick={() => moveSlot(r.id, "down")} disabled={busy || ri === reqs.length - 1} aria-label="Bajar preferencia"><ArrowDown size={12} /></Button>
-                          </div>
-                          <span className="min-w-0 flex-[1_1_100%] sm:flex-1 order-last sm:order-none basis-full sm:basis-auto text-sm leading-snug">{DAYS[r.dayOfWeek]} {fmtRange(r.startHour, r.endHour)}</span>
-                          <Button size="iconSm" variant="destructive" onClick={() => setConfirmTarget({ kind: "slot", id: r.id, label: `¿Borrar posibilidad ${DAYS[r.dayOfWeek]} ${fmtRange(r.startHour, r.endHour)}?` })} aria-label="Borrar"><Trash2 size={12} /></Button>
-                        </SlotRowItem>
-                      ))}
-                    </AnimatePresence>
-                  </Reorder.Group>
-                </div>
-              );
-            })}
-          </div>
         )}
       </Card>
       </>)}
@@ -612,10 +518,14 @@ export default function SubjectDetailClient({ id }: { id: number }) {
           <div className="space-y-3">
             <div>
               <Label htmlFor="m-student">Alumno</Label>
-              <Select value={newStudent} onValueChange={setNewStudent}>
+              <Select value={newStudent} onValueChange={(v) => { setNewStudent(v); applyGradeRuleToForm(v); }}>
                 <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                 <SelectContent>
-                  {availableStudents.map((s) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+                  {availableStudents.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {s.name}{s.grade ? ` · ${s.grade}` : ""}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               {availableStudents.length === 0 && (
@@ -627,16 +537,19 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                 </div>
               )}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-4">
               {!subject?.isCollective && (
                 <>
                   <div>
-                    <Label htmlFor="m-slots">Solicitudes pedidas (nº de opciones que dará el alumno)</Label>
-                    <Input type="number" min={1} value={newSlotsRequired} onChange={(e) => setNewSlotsRequired(e.target.value)} />
+                    <Label htmlFor="m-slots">{COPY.slotsRequiredLabel}</Label>
+                    <Input id="m-slots" type="number" min={1} max={10} value={newSlotsRequired} onChange={(e) => setNewSlotsRequired(e.target.value)} />
                   </div>
                   <div>
-                    <Label htmlFor="m-dur">Duración de su clase en minutos</Label>
-                    <Input type="number" min={5} step={5} value={newDurationMin} onChange={(e) => setNewDurationMin(e.target.value)} placeholder={String(defaultDur)} />
+                    <Label htmlFor="m-dur">{COPY.durationLabel}</Label>
+                    <Input id="m-dur" type="number" min={5} step={5} value={newDurationMin} onChange={(e) => setNewDurationMin(e.target.value)} placeholder={String(defaultDur)} />
+                    {newStudent && gradeRuleFor(allStudents.find((s) => String(s.id) === newStudent)?.grade) && (
+                      <p className="text-xs text-gray-500 mt-1">Pre-rellenado por regla del curso</p>
+                    )}
                   </div>
                 </>
               )}
@@ -658,102 +571,72 @@ export default function SubjectDetailClient({ id }: { id: number }) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editMember != null} onOpenChange={(o) => { if (!o) setEditMember(null); }}>
+      <Dialog open={gradeOpen} onOpenChange={setGradeOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Editar inscripción</DialogTitle>
+            <DialogTitle>Añadir curso a la asignatura</DialogTitle>
             <DialogDescription>
-              Estás editando a <strong>{editMember?.student.name}</strong> en esta asignatura (no sus datos personales).
+              Inscribe a todos los alumnos del curso con la duración indicada. La regla se guarda para futuros alumnos del mismo curso.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-sm">
-              <span className="font-semibold">{editMember?.student.name}</span> — ajustes solo para esta asignatura
+            <div>
+              <Label htmlFor="g-grade">Curso</Label>
+              <Select value={newGrade} onValueChange={setNewGrade}>
+                <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
+                <SelectContent>
+                  {grades.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {!subject?.isCollective && (
-                <>
-                  <div>
-                    <Label htmlFor="em-slots">Opciones que debe dar ({editMember?.student.name ?? "alumno"})</Label>
-                    <Input id="em-slots" type="number" min={1} value={editSlots} onChange={(e) => setEditSlots(e.target.value)} />
-                  </div>
-                  <div>
-                    <Label htmlFor="em-dur2">Duración de SU clase en minutos (vacío = default)</Label>
-                    <Input id="em-dur" type="number" min={5} step={5} value={editDuration} onChange={(e) => setEditDuration(e.target.value)} placeholder={String(defaultDur)} />
-                  </div>
-                </>
-              )}
+              <div>
+                <Label htmlFor="g-dur">Duración de clase para este curso (minutos)</Label>
+                <Input id="g-dur" type="number" min={5} step={5} value={gradeDurationMin} onChange={(e) => setGradeDurationMin(e.target.value)} />
+              </div>
+              <div>
+                <Label htmlFor="g-slots">{COPY.slotsRequiredLabel}</Label>
+                <Input id="g-slots" type="number" min={1} max={10} value={gradeSlotsRequired} onChange={(e) => setGradeSlotsRequired(e.target.value)} />
+              </div>
             </div>
-            {subject?.isCollective ? (
-              <p className="text-xs text-gray-500">En asignaturas colectivas la duración es común: {fmtDurationMin(defaultDur)}.</p>
-            ) : (
-              <p className="text-xs text-gray-500">El orden entre alumnos se gestiona con las flechas de la lista, no aquí.</p>
+            {newGrade && (
+              <p className="text-xs text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                Se inscribirán los alumnos de <strong>{newGrade}</strong> que aún no estén en esta asignatura, cada uno con clase de <strong>{fmtDurationMin(Number(gradeDurationMin) || 0)}</strong>.
+              </p>
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditMember(null)}><X size={14} /> Cancelar</Button>
-            <Button onClick={submitEditMember}><Save size={14} /> Guardar</Button>
+            <Button variant="outline" onClick={() => setGradeOpen(false)}><X size={14} /> Cancelar</Button>
+            <Button onClick={submitGrade}><Save size={14} /> Añadir curso</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={srOpen} onOpenChange={setSrOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Añadir posibilidad de horario</DialogTitle>
+      <Dialog open={editMember != null} onOpenChange={(o) => { if (!o) setEditMember(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader className="text-center sm:text-center">
+            <DialogTitle>Editar inscripción</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label htmlFor="sd-alumno-1">Alumno</Label>
-              <Select value={srStudent} onValueChange={setSrStudent}>
-                <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                <SelectContent>
-                  {members.map((m) => <SelectItem key={m.studentId} value={String(m.studentId)}>{m.student.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <Label htmlFor="sr-day">Día</Label>
-                <Select value={srDay} onValueChange={setSrDay}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                  <SelectContent>
-                    {DAYS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="sr-start">Hora de inicio</Label>
-                <Select value={srStart} onValueChange={setSrStart}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                  <SelectContent>
-                    {HOURS_START.map((o) => hourItem(o, srHourSets.startSet))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="sr-end">Hora de fin</Label>
-                <Select value={srEnd} onValueChange={setSrEnd}>
-                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                  <SelectContent>
-                    {HOURS_END.map((o) => hourItem(o, srHourSets.endSet))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            {srHourSets.ranges.length === 0 && srStudent && (
-              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-                No hay horas compatibles para este alumno. Define su disponibilidad en Alumnos.
-              </p>
+          <div className="mx-auto w-full max-w-xs space-y-4 py-1">
+            {!subject?.isCollective && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="em-slots">{COPY.slotsRequiredLabel}</Label>
+                  <Input id="em-slots" type="number" min={1} max={10} value={editSlots} onChange={(e) => setEditSlots(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="em-dur">{COPY.durationLabel}</Label>
+                  <Input id="em-dur" type="number" min={5} step={5} value={editDuration} onChange={(e) => setEditDuration(e.target.value)} placeholder={String(defaultDur)} />
+                </div>
+              </>
             )}
-            <p className="text-xs text-gray-500">Deben caer dentro de la disponibilidad del profesor y del horario disponible del alumno.</p>
-            {srError && (
-              <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{srError}</p>
+            {subject?.isCollective && (
+              <p className="text-xs text-gray-500 text-center">En asignaturas colectivas la duración es común: {fmtDurationMin(defaultDur)}.</p>
             )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSrOpen(false)}><X size={14} /> Cancelar</Button>
-            <Button onClick={submitSr}><Save size={14} /> Añadir</Button>
+          <DialogFooter className="sm:justify-center gap-2">
+            <Button variant="outline" onClick={() => setEditMember(null)}><X size={14} /> Cancelar</Button>
+            <Button onClick={submitEditMember}><Save size={14} /> Guardar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -761,7 +644,9 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       <AlertDialog open={confirmTarget !== null} onOpenChange={(o) => { if (!o) setConfirmTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirmar</AlertDialogTitle>
+            <AlertDialogTitle>
+              {confirmTarget?.kind === "gradeRule" ? "Eliminar regla de curso" : "Confirmar"}
+            </AlertDialogTitle>
             <AlertDialogDescription>{confirmMessage}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

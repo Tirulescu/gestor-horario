@@ -3,6 +3,7 @@ import { db, schema } from "@/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { apiError, safeJson, validateDay, validateHourRange } from "@/lib/validate";
 import { normalizeRanges, validateSlotRequest } from "@/lib/studentAvailability";
+import { resolveMemberDurationMin, slotMatchesDuration } from "@/lib/hours";
 import {
   requireTeacher,
   assertSubjectOwned,
@@ -10,6 +11,18 @@ import {
   assertSlotRequestOwned,
   getSubjectIdsForTeacher,
 } from "@/lib/auth/requireTeacher";
+
+async function getRequiredDurationMin(subjectId: number, studentId: number): Promise<number | null> {
+  const subject = await db.query.subjects.findFirst({ where: eq(schema.subjects.id, subjectId) });
+  if (!subject) return null;
+  const member = await db.query.subjectStudents.findFirst({
+    where: and(
+      eq(schema.subjectStudents.subjectId, subjectId),
+      eq(schema.subjectStudents.studentId, studentId),
+    ),
+  });
+  return resolveMemberDurationMin(subject, member);
+}
 
 export async function GET(req: NextRequest) {
   const auth = await requireTeacher();
@@ -22,24 +35,26 @@ export async function GET(req: NextRequest) {
   const subjectIds = await getSubjectIdsForTeacher(auth.teacher.id);
   if (subjectIds.length === 0) return Response.json([]);
 
-  let rows = await db.query.slotRequests.findMany({
-    where: inArray(schema.slotRequests.subjectId, subjectIds),
-    with: { subject: true },
-    orderBy: (s, { asc }) => [asc(s.id)],
-  });
+  const conditions = [inArray(schema.slotRequests.subjectId, subjectIds)];
 
   if (subjectId) {
     const sid = Number(subjectId);
     const denied = await assertSubjectOwned(sid, auth.teacher.id);
     if (denied) return denied;
-    rows = rows.filter((r) => r.subjectId === sid);
+    conditions.push(eq(schema.slotRequests.subjectId, sid));
   }
   if (studentId) {
     const stid = Number(studentId);
     const denied = await assertStudentAccessible(stid, auth.teacher.id);
     if (denied) return denied;
-    rows = rows.filter((r) => r.studentId === stid);
+    conditions.push(eq(schema.slotRequests.studentId, stid));
   }
+
+  const rows = await db.query.slotRequests.findMany({
+    where: and(...conditions),
+    with: { subject: true },
+    orderBy: (s, { asc }) => [asc(s.id)],
+  });
   return Response.json(rows);
 }
 
@@ -66,6 +81,11 @@ export async function POST(req: NextRequest) {
   const hErr = validateHourRange(startHour, endHour);
   if (hErr) return apiError(hErr);
 
+  const requiredDurationMin = await getRequiredDurationMin(subjectId, studentId);
+  if (requiredDurationMin != null && !slotMatchesDuration(startHour, endHour, requiredDurationMin)) {
+    return apiError(`La solicitud debe durar exactamente ${requiredDurationMin} min`);
+  }
+
   let prefOrder = Number(body.prefOrder);
   if (!prefOrder || prefOrder < 1) {
     const existing = await db.query.slotRequests.findMany({
@@ -87,6 +107,7 @@ export async function POST(req: NextRequest) {
       teacherAvails,
       studentAvailable: available,
       studentBlocked: blocked,
+      requiredDurationMin: requiredDurationMin ?? undefined,
     });
     if (slotErr) return apiError(slotErr);
   }
@@ -128,6 +149,11 @@ export async function PATCH(req: NextRequest) {
   const hErr = validateHourRange(startHour, endHour);
   if (hErr) return apiError(hErr);
 
+  const requiredDurationMin = await getRequiredDurationMin(row.subjectId, row.studentId);
+  if (requiredDurationMin != null && !slotMatchesDuration(startHour, endHour, requiredDurationMin)) {
+    return apiError(`La solicitud debe durar exactamente ${requiredDurationMin} min`);
+  }
+
   const student = await db.query.students.findFirst({ where: eq(schema.students.id, row.studentId) });
   const teacherAvails = await db.query.availabilities.findMany({
     where: eq(schema.availabilities.teacherId, auth.teacher.id),
@@ -140,6 +166,7 @@ export async function PATCH(req: NextRequest) {
       teacherAvails,
       studentAvailable: normalizeRanges(student.availableRanges),
       studentBlocked: normalizeRanges(student.blockedRanges),
+      requiredDurationMin: requiredDurationMin ?? undefined,
     });
     if (slotErr) return apiError(slotErr);
   }
