@@ -62,7 +62,7 @@ button, a, [role="button"], .dock-item, .chip {
 }
 @media (max-width: 767px) {
   .install-prompt-dock {
-    bottom: calc(5.75rem + env(safe-area-inset-bottom, 0px));
+    bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
   }
 }
 .install-prompt-inner {
@@ -689,7 +689,16 @@ button, a, [role="button"], .dock-item, .chip {
     width: max-content;
     max-width: calc(100vw - 1.5rem);
   }
+  .dock-pill {
+    position: absolute;
+    z-index: 0;
+    border-radius: 0.95rem;
+    background: rgb(239 246 255); /* blue-50 */
+    pointer-events: none;
+  }
   .dock-item {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -701,7 +710,13 @@ button, a, [role="button"], .dock-item, .chip {
     color: #9ca3af;
     text-decoration: none;
     border-radius: 0.95rem;
-    transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+    transition: color 0.15s ease, transform 0.15s ease;
+  }
+  .dock-item-inner {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
   }
   .dock-item:active { transform: scale(0.94); }
   .dock-active {
@@ -710,8 +725,9 @@ button, a, [role="button"], .dock-item, .chip {
   .dock-active .dock-label { font-weight: 700; }
   .dock-active svg { transform: scale(1.12); transition: transform 0.15s ease; }
   .dock-label { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.01em; }
+  /* Holgura bajo el contenido para que no quede tapado por el dock al hacer scroll */
   .main-with-dock {
-    padding-bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(7.5rem + env(safe-area-inset-bottom, 0px));
   }
 }
 @media (max-width: 380px) {

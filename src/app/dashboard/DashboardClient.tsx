@@ -15,7 +15,15 @@ import { SCHEDULE_DAY_START, SCHEDULE_DAY_END, endHourFromDuration, resolveMembe
 import { carveAvailabilityAroundBlocked, getFreeHourSetsForDays, normalizeRanges, type TimeRange } from "@/lib/studentAvailability";
 import { persistAvailabilityAdds, replaceAvailabilityPieces } from "@/lib/availabilityMutations";
 import TeacherScheduleManageDialog from "@/components/TeacherScheduleManageDialog";
-import { invalidate, invalidateMany, put, warmData } from "@/lib/clientCache";
+import {
+  DASHBOARD_ENDPOINTS,
+  hasFreshAll,
+  invalidate,
+  invalidateMany,
+  needsRefresh,
+  put,
+  warmData,
+} from "@/lib/clientCache";
 import {
   COLORS, HOURS_START, HOURS_END,
   type Teacher, type Subject, type TeacherBlock, type Availability,
@@ -74,12 +82,22 @@ export default function DashboardClient() {
     setAssignments(cached.assignments);
     setTeacherBlocks(cached.teacherBlocks);
     setAvailabilities(cached.availabilities);
+    const sts = warmData<Student[]>("/api/students");
+    const ss = warmData<SubjectStudent[]>("/api/subject_students");
+    if (sts) setStudents(sts);
+    if (ss) setSubjectStudents(ss);
     return true;
   }
 
-  async function load() {
+  async function load(opts: { force?: boolean } = {}) {
     const hadCache = hydrateFromCache();
     if (hadCache) setLoading(false);
+
+    if (!opts.force && hasFreshAll(DASHBOARD_ENDPOINTS)) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const [teachers, subs, asg, tb, av, sts, ss] = await Promise.all([
         fetch("/api/teachers").then((r) => r.json()) as Promise<Teacher[]>,
@@ -109,11 +127,12 @@ export default function DashboardClient() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === "visible") load();
+      if (document.visibilityState !== "visible") return;
+      if (needsRefresh(DASHBOARD_ENDPOINTS)) void load({ force: true });
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -201,6 +220,8 @@ export default function DashboardClient() {
     [subjects, subjectColor],
   );
 
+  const scheduleLocked = Boolean(teacher?.scheduleFixed);
+
   async function autoScheduleSubjects(subjectIds?: number[]) {
     setBusy(true); setAutoResult(null);
     const res = await fetch("/api/auto_schedule", {
@@ -215,7 +236,7 @@ export default function DashboardClient() {
     const skipped = data.skipped?.length ?? 0;
     toast("success", `Auto-agendar: ${data.assigned.length} colocados, ${data.unassigned.length} sin colocar${skipped ? `, ${skipped} omitidas` : ""}`);
     invalidateMany(["/api/assignments", "/api/subject_students"]);
-    await load();
+    await load({ force: true });
   }
 
   async function deleteAssignment() {
@@ -234,7 +255,7 @@ export default function DashboardClient() {
     setSelectedAssignment(null);
     setSelectedCollectiveSession(null);
     invalidate("/api/assignments");
-    await load();
+    await load({ force: true });
   }
 
   async function applyAvailabilityChanges(args: {
@@ -277,7 +298,7 @@ export default function DashboardClient() {
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
       invalidate("/api/availabilities");
-      await load();
+      await load({ force: true });
       return true;
     } finally {
       setBusy(false);
@@ -359,7 +380,7 @@ export default function DashboardClient() {
       );
       invalidate("/api/teacher_blocks");
       invalidate("/api/availabilities");
-      await load();
+      await load({ force: true });
       return true;
     } finally {
       setBusy(false);
@@ -374,7 +395,7 @@ export default function DashboardClient() {
     }
     toast("success", "Evento quitado");
     invalidate("/api/teacher_blocks");
-    await load();
+    await load({ force: true });
     return true;
   }
 
@@ -449,7 +470,7 @@ export default function DashboardClient() {
     setSelectedAssignment(null);
     setSelectedCollectiveSession(null);
     invalidate("/api/assignments");
-    await load();
+    await load({ force: true });
   }
 
   return (
@@ -459,13 +480,13 @@ export default function DashboardClient() {
         title={loading ? <Skeleton className="inline-block h-7 w-40 align-middle" /> : (teacher?.name ?? "—")}
         description="Clases, disponibilidad y eventos."
         actions={
-          <>
-            <Button variant="outline" onClick={() => setManageOpen(true)}>
-              <CalendarClock size={16} />
-              <span className="sm:hidden">Horario</span>
-              <span className="hidden sm:inline">Gestionar horario</span>
-            </Button>
-            {!loading && !teacher?.scheduleFixed && (
+          !loading && !scheduleLocked ? (
+            <>
+              <Button variant="outline" onClick={() => setManageOpen(true)}>
+                <CalendarClock size={16} />
+                <span className="sm:hidden">Horario</span>
+                <span className="hidden sm:inline">Gestionar horario</span>
+              </Button>
               <Button
                 onClick={() => autoScheduleSubjects()}
                 loading={busy}
@@ -476,8 +497,8 @@ export default function DashboardClient() {
                 <span className="sm:hidden">Auto-agendar</span>
                 <span className="hidden sm:inline">Auto-agendar todo</span>
               </Button>
-            )}
-          </>
+            </>
+          ) : undefined
         }
       />
 
@@ -496,70 +517,78 @@ export default function DashboardClient() {
           endH={SCHEDULE_DAY_END}
           expandMobile
           allowFullscreen
-          onBlockClick={(b) => {
-            if (b.id >= 1000000) {
-              const blk = teacherBlocks.find((x) => 1000000 + x.id === b.id);
-              if (blk) setConfirmTb(blk);
-              return;
-            }
-            const a = assignments.find((x) => x.id === b.id);
-            if (!a) return;
-            if (a.collectiveSessionId) {
-              const group = assignments.filter((x) => x.collectiveSessionId === a.collectiveSessionId);
-              setSelectedCollectiveSession(group);
-              setSelectedAssignment(null);
-            } else {
-              setSelectedAssignment(a);
-              setSelectedCollectiveSession(null);
-            }
-          }}
+          onBlockClick={
+            scheduleLocked
+              ? undefined
+              : (b) => {
+                  if (b.id >= 1000000) {
+                    const blk = teacherBlocks.find((x) => 1000000 + x.id === b.id);
+                    if (blk) setConfirmTb(blk);
+                    return;
+                  }
+                  const a = assignments.find((x) => x.id === b.id);
+                  if (!a) return;
+                  if (a.collectiveSessionId) {
+                    const group = assignments.filter((x) => x.collectiveSessionId === a.collectiveSessionId);
+                    setSelectedCollectiveSession(group);
+                    setSelectedAssignment(null);
+                  } else {
+                    setSelectedAssignment(a);
+                    setSelectedCollectiveSession(null);
+                  }
+                }
+          }
           showLegend
           legend={legend}
         />
       )}
 
-      <AssignmentEditDialog
-        selectedAssignment={selectedAssignment}
-        selectedCollectiveSession={selectedCollectiveSession}
-        durationMin={editDurationMin}
-        editAsgDay={editAsgDay}
-        editAsgStart={editAsgStart}
-        editAsgEnd={editAsgEnd}
-        editHourSets={editHourSets}
-        savingEdit={savingEdit}
-        onEditAsgDayChange={setEditAsgDay}
-        onEditAsgStartChange={setEditAsgStart}
-        onEditAsgEndChange={setEditAsgEnd}
-        onClose={() => {
-          setSelectedAssignment(null);
-          setSelectedCollectiveSession(null);
-        }}
-        onSave={saveEditAsg}
-        onRequestDelete={() => setConfirmDeleteAsg(true)}
-      />
+      {!scheduleLocked && (
+        <>
+          <AssignmentEditDialog
+            selectedAssignment={selectedAssignment}
+            selectedCollectiveSession={selectedCollectiveSession}
+            durationMin={editDurationMin}
+            editAsgDay={editAsgDay}
+            editAsgStart={editAsgStart}
+            editAsgEnd={editAsgEnd}
+            editHourSets={editHourSets}
+            savingEdit={savingEdit}
+            onEditAsgDayChange={setEditAsgDay}
+            onEditAsgStartChange={setEditAsgStart}
+            onEditAsgEndChange={setEditAsgEnd}
+            onClose={() => {
+              setSelectedAssignment(null);
+              setSelectedCollectiveSession(null);
+            }}
+            onSave={saveEditAsg}
+            onRequestDelete={() => setConfirmDeleteAsg(true)}
+          />
 
-      <TeacherScheduleManageDialog
-        open={manageOpen}
-        onOpenChange={setManageOpen}
-        availabilities={availabilities}
-        teacherBlocks={teacherBlocks}
-        assignments={assignments}
-        saving={busy}
-        onApplyAvailability={applyAvailabilityChanges}
-        onApplyBlocks={applyBlockChanges}
-      />
+          <TeacherScheduleManageDialog
+            open={manageOpen}
+            onOpenChange={setManageOpen}
+            availabilities={availabilities}
+            teacherBlocks={teacherBlocks}
+            assignments={assignments}
+            saving={busy}
+            onApplyAvailability={applyAvailabilityChanges}
+            onApplyBlocks={applyBlockChanges}
+          />
 
-      <ConfirmDeleteDialogs
-        confirmDeleteAsg={confirmDeleteAsg}
-        selectedAssignment={selectedAssignment}
-        selectedCollectiveSession={selectedCollectiveSession}
-        confirmTb={confirmTb}
-        deleting={deleting}
-        onConfirmDeleteAsgOpenChange={setConfirmDeleteAsg}
-        onConfirmTbOpenChange={(open) => { if (!open) setConfirmTb(null); }}
-        onDeleteAssignment={deleteAssignment}
-        onDeleteTeacherBlock={confirmDeleteTb}
-      />
+          <ConfirmDeleteDialogs
+            confirmDeleteAsg={confirmDeleteAsg}
+            selectedAssignment={selectedAssignment}
+            selectedCollectiveSession={selectedCollectiveSession}
+            confirmTb={confirmTb}
+            deleting={deleting}
+            onConfirmDeleteAsgOpenChange={setConfirmDeleteAsg}
+            onConfirmTbOpenChange={(open) => { if (!open) setConfirmTb(null); }}
+            onDeleteAssignment={deleteAssignment}
+            onDeleteTeacherBlock={confirmDeleteTb}
+          />
+        </>
+      )}
     </div>
   );
 }

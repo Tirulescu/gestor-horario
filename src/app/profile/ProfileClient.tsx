@@ -120,7 +120,7 @@ export default function ProfileClient() {
               {teacher.scheduleFixed && <Badge variant="warn">Activo</Badge>}
             </div>
             <p id="schedule-fixed-desc" className="text-sm text-gray-500 leading-relaxed">
-              Bloquea el auto-agendado. Puedes seguir editando a mano.
+              Bloquea el auto-agendado y toda edición del plan (horarios, alumnos, asignaturas y solicitudes). Solo podrás consultar el detalle.
             </p>
           </div>
           <Switch

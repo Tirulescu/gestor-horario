@@ -41,7 +41,7 @@ export default function AppShell({
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 overflow-x-hidden main-with-dock">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 overflow-x-hidden main-with-dock">
         {children}
       </main>
 

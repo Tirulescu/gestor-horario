@@ -13,6 +13,7 @@ import {
   assertStudentAccessible,
   getStudentIdsForTeacher,
   linkStudentToTeacher,
+  assertScheduleEditable,
 } from "@/lib/auth/requireTeacher";
 
 export async function GET(req: NextRequest) {
@@ -38,6 +39,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const body = await safeJson(req);
   const name = String(body.name ?? "").trim();
@@ -52,6 +55,8 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const body = await safeJson(req);
   const id = Number(body.id);
@@ -103,6 +108,8 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const { searchParams } = new URL(req.url);
   const id = Number(searchParams.get("id"));

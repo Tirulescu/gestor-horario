@@ -23,7 +23,7 @@ import { AnimatePresence, Reorder } from "motion/react";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import { ChipGroupSkeleton, MemberCardSkeleton } from "@/components/skeletons";
-import { warmData, put, invalidate } from "@/lib/clientCache";
+import { warmData, put, invalidate, hasFresh, hasFreshAll } from "@/lib/clientCache";
 import { DAYS } from "@/lib/validate";
 import { fmtRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, fmtDurationMin, resolveMemberDurationMin, fmtSubjectDurationOptions, slotDurationMin } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
@@ -62,6 +62,7 @@ export default function RequestsClient() {
   const [deleting, setDeleting] = useState(false);
   const [loadingSubject, setLoadingSubject] = useState(false);
   const [loadingSubjects, setLoadingSubjects] = useState(true);
+  const [scheduleLocked, setScheduleLocked] = useState(false);
 
   // Add-solicitud dialog state
   const [addOpen, setAddOpen] = useState(false);
@@ -137,8 +138,10 @@ export default function RequestsClient() {
     );
   }
 
-  async function loadSubjects() {
+  async function loadSubjects(opts: { force?: boolean } = {}) {
     const cached = warmData<Subject[]>("/api/subjects");
+    const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+    if (cachedTeachers) setScheduleLocked(Boolean(cachedTeachers[0]?.scheduleFixed));
     if (cached !== null && cached.length > 0) {
       setSubjects(cached);
       if (activeSubjectId === null) setActiveSubjectId(cached[0].id);
@@ -146,18 +149,32 @@ export default function RequestsClient() {
     } else {
       setLoadingSubjects(true);
     }
+
+    if (!opts.force && hasFresh("/api/subjects") && hasFresh("/api/teachers")) {
+      setLoadingSubjects(false);
+      return;
+    }
+
     try {
-      const subs = await fetch("/api/subjects").then((r) => r.json()) as Subject[];
+      const [subs, teachers] = await Promise.all([
+        fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
+        fetch("/api/teachers").then((r) => r.json()) as Promise<{ scheduleFixed?: boolean }[]>,
+      ]);
       setSubjects(subs);
+      setScheduleLocked(Boolean(teachers[0]?.scheduleFixed));
       put("/api/subjects", subs);
+      put("/api/teachers", teachers);
       if (subs.length > 0 && activeSubjectId === null) setActiveSubjectId(subs[0].id);
     } finally {
       setLoadingSubjects(false);
     }
   }
 
-  async function loadSubjectData(subjectId: number, opts: { silent?: boolean } = {}) {
-    const { silent = false } = opts;
+  async function loadSubjectData(
+    subjectId: number,
+    opts: { silent?: boolean; force?: boolean } = {},
+  ) {
+    const { silent = false, force = false } = opts;
     const sub = subjects.find((s) => s.id === subjectId);
     const hydrated = hydrateSubjectData(subjectId);
     if (hydrated) {
@@ -169,6 +186,19 @@ export default function RequestsClient() {
     } else if (!silent) {
       setLoadingSubject(true);
     }
+
+    const subjectKeys = [
+      "/api/subject_students",
+      "/api/slot_requests",
+      "/api/students",
+      ...(sub ? ["/api/availabilities"] : []),
+    ] as const;
+
+    if (!force && hydrated && hasFreshAll(subjectKeys)) {
+      if (!silent) setLoadingSubject(false);
+      return;
+    }
+
     try {
       const [ssAll, srAll, st, av] = await Promise.all([
         fetch("/api/subject_students").then((r) => r.json()) as Promise<SubjectStudent[]>,
@@ -208,7 +238,7 @@ export default function RequestsClient() {
   const activeSubject = subjects.find((s) => s.id === activeSubjectId) ?? null;
 
   useEffect(() => {
-    if (activeSubjectId !== null) loadSubjectData(activeSubjectId);
+    if (activeSubjectId !== null) void loadSubjectData(activeSubjectId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubjectId]);
 
@@ -223,7 +253,7 @@ export default function RequestsClient() {
     setBusy(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     invalidate("/api/subject_students");
-    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true });
+    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true, force: true });
   }
 
   // Reordenar preferencia de posibilidad (slot_requests) — swap con vecino
@@ -237,7 +267,7 @@ export default function RequestsClient() {
     setBusy(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     invalidate("/api/slot_requests");
-    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true });
+    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true, force: true });
   }
 
   const pendingSync = useRef<{ id: number; to: number }[]>([]);
@@ -264,7 +294,7 @@ export default function RequestsClient() {
         }
       }
       invalidate("/api/subject_students");
-      if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true });
+      if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true, force: true });
     }, 400);
   }
 
@@ -299,7 +329,7 @@ export default function RequestsClient() {
           });
         }
         invalidate("/api/slot_requests");
-        if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true });
+        if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true, force: true });
       })();
     }, 400);
   }
@@ -312,7 +342,7 @@ export default function RequestsClient() {
     setConfirmTarget(null);
     if (!res.ok) return toast("error", "No se pudo borrar");
     invalidate("/api/slot_requests"); toast("success", "Solicitud borrada");
-    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId);
+    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { force: true });
   }
 
   function openAdd(studentId: number) {
@@ -427,7 +457,7 @@ export default function RequestsClient() {
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     invalidate("/api/slot_requests"); toast("success", "Solicitud añadida");
     setAddOpen(false);
-    await loadSubjectData(activeSubjectId);
+    await loadSubjectData(activeSubjectId, { force: true });
   }
 
   function openEdit(r: SlotRequest) {
@@ -474,7 +504,7 @@ export default function RequestsClient() {
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     invalidate("/api/slot_requests"); toast("success", "Solicitud actualizada");
     setEditOpen(false);
-    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId);
+    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { force: true });
   }
 
   const sortedMembers = useMemo(
@@ -564,6 +594,26 @@ export default function RequestsClient() {
       {/* Cards por alumno (arrastrables SOLO desde el grip) */}
       {activeSubject && loadingSubject ? (
         <MemberCardSkeleton count={2} />
+      ) : scheduleLocked ? (
+        <div className="space-y-4">
+          {sortedMembers.map((m, mi) => (
+            <MemberCard
+              key={m.id}
+              m={m}
+              mi={mi}
+              total={sortedMembers.length}
+              reqs={requestsByStudent[m.studentId] ?? []}
+              busy={busy}
+              moveMember={moveMember}
+              moveSlot={moveSlot}
+              handleReorder={handleReorder}
+              openAdd={openAdd}
+              openEdit={openEdit}
+              setConfirmTarget={setConfirmTarget}
+              readOnly
+            />
+          ))}
+        </div>
       ) : (
       <Reorder.Group axis="y" values={sortedMembers} onReorder={handleMemberReorder} layoutScroll className="space-y-4 reorder-group">
         <AnimatePresence initial={false}>
@@ -590,11 +640,13 @@ export default function RequestsClient() {
       {activeSubject && !loadingSubject && sortedMembers.length === 0 && (
         <Card className="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <p className="text-sm text-gray-500">Sin alumnos inscritos en esta asignatura.</p>
-          <Button asChild>
-            <Link href={`/subjects/${activeSubject.id}`}>
-              <Plus size={16} /> Añadir alumnos
-            </Link>
-          </Button>
+          {!scheduleLocked && (
+            <Button asChild>
+              <Link href={`/subjects/${activeSubject.id}`}>
+                <Plus size={16} /> Añadir alumnos
+              </Link>
+            </Button>
+          )}
         </Card>
       )}
 

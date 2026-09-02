@@ -10,6 +10,7 @@ import {
   assertStudentAccessible,
   assertSlotRequestOwned,
   getSubjectIdsForTeacher,
+  assertScheduleEditable,
 } from "@/lib/auth/requireTeacher";
 
 async function getRequiredDurationMin(subjectId: number, studentId: number): Promise<number | null> {
@@ -61,6 +62,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const body = await safeJson(req);
   const studentId = Number(body.studentId);
@@ -118,6 +121,8 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const { searchParams } = new URL(req.url);
   const id = Number(searchParams.get("id"));
@@ -132,6 +137,8 @@ export async function DELETE(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const body = await safeJson(req);
   const id = Number(body.id);
@@ -178,6 +185,8 @@ export async function PATCH(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const body = await safeJson(req);
   const id = Number(body.id);

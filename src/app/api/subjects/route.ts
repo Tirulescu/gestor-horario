@@ -3,7 +3,7 @@ import { db, schema } from "@/db";
 import { eq } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
 import { durationMinError } from "@/lib/hours";
-import { requireTeacher, assertOwnTeacher, assertSubjectOwned } from "@/lib/auth/requireTeacher";
+import { requireTeacher, assertOwnTeacher, assertSubjectOwned, assertScheduleEditable } from "@/lib/auth/requireTeacher";
 
 export async function GET(req: NextRequest) {
   const auth = await requireTeacher();
@@ -26,6 +26,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const body = await safeJson(req);
   const name = String(body.name ?? "").trim();
@@ -45,6 +47,8 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const body = await safeJson(req);
   const id = Number(body.id);
@@ -79,6 +83,8 @@ export async function PUT(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const body = await safeJson(req);
   const id = Number(body.id);
@@ -88,9 +94,6 @@ export async function PATCH(req: NextRequest) {
 
   const patch: Partial<{ scheduleFixed: boolean; isCollective: boolean }> = {};
   if (body.scheduleFixed !== undefined) {
-    if (auth.teacher.scheduleFixed) {
-      return apiError("El horario ya está fijado en tu perfil; no hace falta fijarlo por asignatura", 403);
-    }
     patch.scheduleFixed = Boolean(body.scheduleFixed);
   }
   if (body.isCollective !== undefined) patch.isCollective = Boolean(body.isCollective);
@@ -108,6 +111,8 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const auth = await requireTeacher();
   if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
 
   const { searchParams } = new URL(req.url);
   const id = Number(searchParams.get("id"));

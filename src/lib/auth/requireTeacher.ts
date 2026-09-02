@@ -24,6 +24,17 @@ export function forbid() {
   return apiError("No autorizado", 403);
 }
 
+/** Bloquea mutaciones de horario cuando el profesor tiene «Fijar horario» activo. */
+export function assertScheduleEditable(teacher: Teacher): Response | null {
+  if (teacher.scheduleFixed) {
+    return apiError(
+      "Horario fijado — desactiva «Fijar horario» en tu perfil para editar el horario",
+      403,
+    );
+  }
+  return null;
+}
+
 export function assertOwnTeacher(teacher: Teacher, teacherId: number): Response | null {
   if (teacher.id !== teacherId) return forbid();
   return null;

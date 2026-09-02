@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import { TableCardSkeleton } from "@/components/skeletons";
-import { warmData, put, invalidate, invalidateMany } from "@/lib/clientCache";
+import { warmData, put, invalidate, invalidateMany, hasFreshAll, STUDENTS_ENDPOINTS } from "@/lib/clientCache";
 import { fmtDayRange } from "@/lib/hours";
 import StudentScheduleViewDialog from "@/components/StudentScheduleViewDialog";
 import StudentScheduleManageDialog from "@/components/StudentScheduleManageDialog";
@@ -75,8 +75,9 @@ export default function StudentsClient() {
   const [confirmDel, setConfirmDel] = useState<Student | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [scheduleLocked, setScheduleLocked] = useState(false);
 
-  async function load() {
+  async function load(opts: { force?: boolean } = {}) {
     const cachedStudents = warmData<Student[]>("/api/students");
     if (cachedStudents !== null) {
       setStudents(cachedStudents);
@@ -85,14 +86,22 @@ export default function StudentsClient() {
       setAvailabilities(warmData<Availability[]>("/api/availabilities") ?? []);
       setTeacherBlocks(warmData<TeacherBlock[]>("/api/teacher_blocks") ?? []);
       setAssignments(warmData<Assignment[]>("/api/assignments") ?? []);
+      const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+      if (cachedTeachers) setScheduleLocked(Boolean(cachedTeachers[0]?.scheduleFixed));
     }
-    const [st, su, ss, av, tb, asg] = await Promise.all([
+
+    if (!opts.force && hasFreshAll(STUDENTS_ENDPOINTS)) {
+      return;
+    }
+
+    const [st, su, ss, av, tb, asg, teachers] = await Promise.all([
       fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
       fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
       fetch("/api/subject_students").then((r) => r.json()) as Promise<SSRow[]>,
       fetch("/api/availabilities").then((r) => r.json()) as Promise<Availability[]>,
       fetch("/api/teacher_blocks").then((r) => r.json()) as Promise<TeacherBlock[]>,
       fetch("/api/assignments").then((r) => r.json()) as Promise<Assignment[]>,
+      fetch("/api/teachers").then((r) => r.json()) as Promise<{ scheduleFixed?: boolean }[]>,
     ]);
     setStudents(st);
     setSubjects(su);
@@ -100,14 +109,16 @@ export default function StudentsClient() {
     setAvailabilities(av);
     setTeacherBlocks(tb);
     setAssignments(asg);
+    setScheduleLocked(Boolean(teachers[0]?.scheduleFixed));
     put("/api/students", st);
     put("/api/subjects", su);
     put("/api/subject_students", ss);
     put("/api/availabilities", av);
     put("/api/teacher_blocks", tb);
     put("/api/assignments", asg);
+    put("/api/teachers", teachers);
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const grades = useMemo(
     () => Array.from(new Set((students ?? []).map((s) => (s.grade ?? "").trim()).filter(Boolean))).sort(),
@@ -237,7 +248,7 @@ export default function StudentsClient() {
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
       invalidate("/api/students");
-      await load();
+      await load({ force: true });
       return true;
     } finally {
       setSaving(false);
@@ -313,7 +324,7 @@ export default function StudentsClient() {
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
       invalidate("/api/students");
-      await load();
+      await load({ force: true });
       return true;
     } finally {
       setSaving(false);
@@ -391,7 +402,7 @@ export default function StudentsClient() {
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
       invalidateMany(["/api/assignments", "/api/subject_students", "/api/students"]);
-      await load();
+      await load({ force: true });
       return true;
     } finally {
       setSaving(false);
@@ -410,7 +421,7 @@ export default function StudentsClient() {
     }
     toast("success", indices.length === 1 ? "Bloqueo quitado" : `${indices.length} bloqueos quitados`);
     invalidate("/api/students");
-    await load();
+    await load({ force: true });
     return true;
   }
 
@@ -423,7 +434,7 @@ export default function StudentsClient() {
     }
     toast("success", "Clase eliminada");
     invalidateMany(["/api/assignments", "/api/subject_students"]);
-    await load();
+    await load({ force: true });
     return true;
   }
 
@@ -478,7 +489,7 @@ export default function StudentsClient() {
     setEditOpen(false);
     toast("success", editing ? "Alumno actualizado" : "Alumno creado");
     invalidateMany(["/api/students", "/api/subject_students", "/api/subjects"]);
-    await load();
+    await load({ force: true });
   }
 
   async function doDelete() {
@@ -489,7 +500,7 @@ export default function StudentsClient() {
     setConfirmDel(null);
     if (!res.ok) return toast("error", "No se pudo borrar");
     invalidate("/api/students"); invalidate("/api/subject_students"); toast("success", "Alumno borrado");
-    await load();
+    await load({ force: true });
   }
 
   const viewStudentFresh = viewStudent
@@ -516,15 +527,19 @@ export default function StudentsClient() {
               <span className="sm:hidden">Calendario</span>
               <span className="hidden sm:inline">Ver calendarios</span>
             </Button>
-            <Button variant="outline" onClick={() => openScheduleManage()}>
-              <CalendarClock size={16} />
-              <span className="sm:hidden">Horario</span>
-              <span className="hidden sm:inline">Gestionar horario</span>
-            </Button>
-            <Button onClick={openNew}>
-              <Plus size={16} />
-              <span className="hidden sm:inline">Nuevo alumno</span>
-            </Button>
+            {!scheduleLocked && (
+              <Button variant="outline" onClick={() => openScheduleManage()}>
+                <CalendarClock size={16} />
+                <span className="sm:hidden">Horario</span>
+                <span className="hidden sm:inline">Gestionar horario</span>
+              </Button>
+            )}
+            {!scheduleLocked && (
+              <Button onClick={openNew}>
+                <Plus size={16} />
+                <span className="hidden sm:inline">Nuevo alumno</span>
+              </Button>
+            )}
           </>
         }
       />
@@ -558,12 +573,16 @@ export default function StudentsClient() {
                   <Button size="iconSm" variant="outline" onClick={() => openScheduleView(s)} aria-label="Ver calendario" title="Ver calendario">
                     <Calendar size={14} />
                   </Button>
-                  <Button size="iconSm" variant="outline" onClick={() => openEdit(s)} aria-label="Editar datos" title="Editar datos">
-                    <Pencil size={14} />
-                  </Button>
-                  <Button size="iconSm" variant="destructive" onClick={() => setConfirmDel(s)} aria-label="Borrar">
-                    <Trash2 size={14} />
-                  </Button>
+                  {!scheduleLocked && (
+                    <>
+                      <Button size="iconSm" variant="outline" onClick={() => openEdit(s)} aria-label="Editar datos" title="Editar datos">
+                        <Pencil size={14} />
+                      </Button>
+                      <Button size="iconSm" variant="destructive" onClick={() => setConfirmDel(s)} aria-label="Borrar">
+                        <Trash2 size={14} />
+                      </Button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -673,21 +692,23 @@ export default function StudentsClient() {
         teacherAvailabilities={availabilities}
       />
 
-      <StudentScheduleManageDialog
-        open={manageOpen}
-        onOpenChange={setManageOpen}
-        students={students ?? []}
-        grades={grades}
-        subjects={subjects}
-        subjectLinks={subjectLinks}
-        teacherBlocks={teacherBlocks}
-        assignments={assignments}
-        initialStudentId={manageStudentId}
-        saving={saving}
-        onApplyAvailability={applyAvailabilityChanges}
-        onApplyBlocks={applyBlockChanges}
-        onApplyEvents={applyEventChanges}
-      />
+      {!scheduleLocked && (
+        <StudentScheduleManageDialog
+          open={manageOpen}
+          onOpenChange={setManageOpen}
+          students={students ?? []}
+          grades={grades}
+          subjects={subjects}
+          subjectLinks={subjectLinks}
+          teacherBlocks={teacherBlocks}
+          assignments={assignments}
+          initialStudentId={manageStudentId}
+          saving={saving}
+          onApplyAvailability={applyAvailabilityChanges}
+          onApplyBlocks={applyBlockChanges}
+          onApplyEvents={applyEventChanges}
+        />
+      )}
 
       <StudentsCalendarDialog
         open={allBlocksOpen}
@@ -695,8 +716,8 @@ export default function StudentsClient() {
         students={students ?? []}
         subjects={subjects}
         initialView={calendarInitialView}
-        onRemoveBlock={removeBlock}
-        onRemoveEvent={removeEvent}
+        onRemoveBlock={scheduleLocked ? undefined : removeBlock}
+        onRemoveEvent={scheduleLocked ? undefined : removeEvent}
       />
 
       <AlertDialog open={confirmDel !== null} onOpenChange={(o) => { if (!o && !deleting) setConfirmDel(null); }}>

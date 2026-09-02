@@ -4,11 +4,22 @@ import { Reorder, useDragControls } from "motion/react";
 import { DragHandle } from "@/components/DragHandle";
 import type { SubjectStudent } from "./types";
 
-export function MemberRow({ m, children, className }: {
+export function MemberRow({ m, children, className, readOnly = false }: {
   m: SubjectStudent;
   children: React.ReactNode;
   className?: string;
+  readOnly?: boolean;
 }) {
+  if (readOnly) {
+    return (
+      <div className={className}>
+        <div className="flex items-center gap-2 flex-wrap border border-gray-100 rounded-lg px-3 py-2 w-full">
+          {children}
+        </div>
+      </div>
+    );
+  }
+
   const controls = useDragControls();
   return (
     <Reorder.Item

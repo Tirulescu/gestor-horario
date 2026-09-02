@@ -488,18 +488,19 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                 Auto-agendar
               </Button>
             )}
-            <div className="inline-flex items-center gap-2 h-11 px-4 rounded-[0.6rem] border border-gray-200 bg-white">
-              <Label htmlFor="subj-fixed" className="mb-0 cursor-pointer text-sm font-medium text-gray-800">
-                Fijar horario
-              </Label>
-              <Switch
-                id="subj-fixed"
-                checked={teacherScheduleFixed || Boolean(subject?.scheduleFixed)}
-                onCheckedChange={toggleScheduleFixed}
-                disabled={busy || !subject || teacherScheduleFixed}
-                title={teacherScheduleFixed ? "El horario está fijado en tu perfil" : undefined}
-              />
-            </div>
+            {!teacherScheduleFixed && (
+              <div className="inline-flex items-center gap-2 h-11 px-4 rounded-[0.6rem] border border-gray-200 bg-white">
+                <Label htmlFor="subj-fixed" className="mb-0 cursor-pointer text-sm font-medium text-gray-800">
+                  Fijar horario
+                </Label>
+                <Switch
+                  id="subj-fixed"
+                  checked={Boolean(subject?.scheduleFixed)}
+                  onCheckedChange={toggleScheduleFixed}
+                  disabled={busy || !subject}
+                />
+              </div>
+            )}
             <Button asChild variant="outline">
               <Link href="/requests"><ClipboardList size={16} /> Solicitudes</Link>
             </Button>
@@ -511,12 +512,14 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       <Card className="p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-semibold flex items-center gap-2"><GraduationCap size={18} className="text-blue-600" /> Alumnos inscritos</h2>
-          <div className="flex flex-wrap gap-2">
-            {!subject.isCollective && grades.length > 0 && (
-              <Button variant="outline" onClick={openAddGrade}><Plus size={16} /> Añadir curso</Button>
-            )}
-            <Button onClick={openAddMember}><Plus size={16} /> Añadir alumno</Button>
-          </div>
+          {!teacherScheduleFixed && (
+            <div className="flex flex-wrap gap-2">
+              {!subject.isCollective && grades.length > 0 && (
+                <Button variant="outline" onClick={openAddGrade}><Plus size={16} /> Añadir curso</Button>
+              )}
+              <Button onClick={openAddMember}><Plus size={16} /> Añadir alumno</Button>
+            </div>
+          )}
         </div>
 
         {!subject.isCollective && gradeDurations.length > 0 && (
@@ -525,14 +528,16 @@ export default function SubjectDetailClient({ id }: { id: number }) {
               <Badge key={g.id} variant="gray" className="gap-1.5 pr-1">
                 {g.grade}: {fmtDurationMin(g.durationMin)} · {g.slotsRequired} solic.
                 {(g.sessionParts ?? 1) > 1 ? ` · ${g.sessionParts}×${SESSION_PART_MIN} min` : ""}
-                <button
-                  type="button"
-                  onClick={() => removeGradeRule(g.id, g.grade)}
-                  className="ml-0.5 rounded hover:bg-gray-200 p-0.5"
-                  aria-label={`Quitar regla de ${g.grade}`}
-                >
-                  <X size={12} />
-                </button>
+                {!teacherScheduleFixed && (
+                  <button
+                    type="button"
+                    onClick={() => removeGradeRule(g.id, g.grade)}
+                    className="ml-0.5 rounded hover:bg-gray-200 p-0.5"
+                    aria-label={`Quitar regla de ${g.grade}`}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
               </Badge>
             ))}
           </div>
@@ -540,6 +545,36 @@ export default function SubjectDetailClient({ id }: { id: number }) {
         
         {sortedMembers.length === 0 ? (
           <div className="text-gray-500 text-sm">Sin alumnos inscritos</div>
+        ) : teacherScheduleFixed ? (
+          <div className="space-y-2">
+            {sortedMembers.map((m, mi) => {
+              const reqs = requestsByStudent[m.studentId] ?? [];
+              return (
+                <MemberRow key={m.id} m={m} readOnly className="flex items-center">
+                  <span className="font-medium">{m.student.name}</span>
+                  {m.student.grade && <span className="text-gray-400 text-xs">{m.student.grade}</span>}
+                  {!subject.isCollective && (
+                    <>
+                      <span className="text-gray-500 text-xs">Duración: {m.durationMin == null ? <span className="italic">{fmtDurationMin(defaultDur)} (defecto)</span> : fmtDurationMin(m.durationMin)}</span>
+                      {(m.sessionParts ?? 1) > 1 && (
+                        <Badge variant="gray">{m.sessionParts}×{SESSION_PART_MIN} min</Badge>
+                      )}
+                    </>
+                  )}
+                  {!subject.isCollective && (
+                    <Badge
+                      variant={reqs.length >= m.slotsRequired ? "success" : "warn"}
+                    >
+                      {COPY.slotsProgress(reqs.length, m.slotsRequired)}
+                    </Badge>
+                  )}
+                  {subject.isCollective && reqs.length > 0 && (
+                    <Badge variant="gray">{reqs.length} solicitud{reqs.length === 1 ? "" : "es"}</Badge>
+                  )}
+                </MemberRow>
+              );
+            })}
+          </div>
         ) : (
           <Reorder.Group axis="y" values={sortedMembers} onReorder={handleMemberReorder} layoutScroll className="space-y-2 reorder-group">
             <AnimatePresence initial={false}>

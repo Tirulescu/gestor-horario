@@ -42,21 +42,31 @@ export default function SubjectsPage() {
   const [deleting, setDeleting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [scheduleLocked, setScheduleLocked] = useState(false);
 
   async function load() {
     const cached = warmData<Subject[]>("/api/subjects");
     if (cached !== null) {
       setSubjects(cached);
-      return;
     }
-    const s = await fetch("/api/subjects").then((r) => r.json());
+    const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+    if (cachedTeachers) setScheduleLocked(Boolean(cachedTeachers[0]?.scheduleFixed));
+    if (cached !== null) return;
+    const [s, teachers] = await Promise.all([
+      fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
+      fetch("/api/teachers").then((r) => r.json()) as Promise<{ scheduleFixed?: boolean }[]>,
+    ]);
     setSubjects(s);
+    setScheduleLocked(Boolean(teachers[0]?.scheduleFixed));
     put("/api/subjects", s);
+    put("/api/teachers", teachers);
   }
 
   useLayoutEffect(() => {
     const cached = warmData<Subject[]>("/api/subjects");
     if (cached !== null) setSubjects(cached);
+    const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+    if (cachedTeachers) setScheduleLocked(Boolean(cachedTeachers[0]?.scheduleFixed));
   }, []);
 
   useEffect(() => { load(); }, []);
@@ -148,10 +158,12 @@ export default function SubjectsPage() {
         title="Asignaturas"
         description="Materias, duración y alumnos."
         actions={
-          <Button onClick={openNew}>
-            <Plus size={16} />
-            <span className="hidden sm:inline">Nueva asignatura</span>
-          </Button>
+          !scheduleLocked ? (
+            <Button onClick={openNew}>
+              <Plus size={16} />
+              <span className="hidden sm:inline">Nueva asignatura</span>
+            </Button>
+          ) : undefined
         }
       />
 
@@ -198,25 +210,27 @@ export default function SubjectsPage() {
                     </Badge>
                   </div>
                 </Link>
-                <div className="entity-card-footer">
-                  <Button
-                    size="iconSm"
-                    variant="outline"
-                    onClick={() => openEdit(s)}
-                    aria-label={`Editar ${s.name}`}
-                    title="Editar"
-                  >
-                    <Pencil size={14} />
-                  </Button>
-                  <Button
-                    size="iconSm"
-                    variant="destructive"
-                    onClick={() => setConfirmId(s.id)}
-                    aria-label={`Borrar ${s.name}`}
-                  >
-                    <Trash2 size={14} />
-                  </Button>
-                </div>
+                {!scheduleLocked && (
+                  <div className="entity-card-footer">
+                    <Button
+                      size="iconSm"
+                      variant="outline"
+                      onClick={() => openEdit(s)}
+                      aria-label={`Editar ${s.name}`}
+                      title="Editar"
+                    >
+                      <Pencil size={14} />
+                    </Button>
+                    <Button
+                      size="iconSm"
+                      variant="destructive"
+                      onClick={() => setConfirmId(s.id)}
+                      aria-label={`Borrar ${s.name}`}
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </div>
+                )}
               </article>
             );
           })}
