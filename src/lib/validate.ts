@@ -26,6 +26,9 @@ export function apiError(message: string, status = 400) {
   return Response.json({ error: message }, { status });
 }
 
+/** Máximo de franjas horarias por alumno (bloqueos / disponibilidad). */
+export const MAX_SCHEDULE_RANGES = 100;
+
 export async function safeJson(req: Request): Promise<Record<string, unknown>> {
   try {
     return await req.json();

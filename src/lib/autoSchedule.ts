@@ -26,6 +26,8 @@ export type {
 export interface AutoScheduleOptions {
   /** Si se indica, solo se auto-agendan estas asignaturas (deben no estar fijadas). */
   subjectIds?: number[];
+  /** Si true, calcula el resultado sin persistir en BD. */
+  dryRun?: boolean;
 }
 
 interface Task {
@@ -427,7 +429,7 @@ export async function autoScheduleByTeacher(
   for (const task of individualTasks) placeIndividual(task);
 
   const targetIds = [...targetSubjectIds];
-  if (targetIds.length > 0) {
+  if (!options.dryRun && targetIds.length > 0) {
     await conn.delete(schema.assignments).where(
       and(
         eq(schema.assignments.teacherId, teacherId),
@@ -437,9 +439,14 @@ export async function autoScheduleByTeacher(
     );
   }
 
-  if (plannedInserts.length > 0) {
+  if (!options.dryRun && plannedInserts.length > 0) {
     await conn.insert(schema.assignments).values(plannedInserts);
   }
 
-  return { assigned, unassigned, skipped: skipped.length > 0 ? skipped : undefined };
+  return {
+    assigned,
+    unassigned,
+    skipped: skipped.length > 0 ? skipped : undefined,
+    simulated: options.dryRun ? true : undefined,
+  };
 }

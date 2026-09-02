@@ -24,6 +24,8 @@ export async function POST(req: NextRequest) {
     return apiError("Horario fijado — desactiva «Fijar horario» en tu perfil para usar el auto-agendado", 403);
   }
 
+  const simulate = Boolean(body.simulate);
+
   if (subjectIds?.length) {
     const owned = await db.query.subjects.findMany({
       where: and(
@@ -36,9 +38,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await withTeacherScheduleLock(teacherId, (tx) =>
-      autoScheduleByTeacher(teacherId, { subjectIds }, tx),
-    );
+    const run = (tx: Parameters<typeof autoScheduleByTeacher>[2]) =>
+      autoScheduleByTeacher(teacherId, { subjectIds, dryRun: simulate }, tx);
+
+    const result = simulate
+      ? await run(db)
+      : await withTeacherScheduleLock(teacherId, run);
     return Response.json(result);
   } catch (e) {
     return apiError((e as Error).message, 500);

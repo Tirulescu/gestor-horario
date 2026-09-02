@@ -12,7 +12,6 @@ import {
   assertOwnTeacher,
   assertStudentAccessible,
   getStudentIdsForTeacher,
-  linkStudentToTeacher,
   assertScheduleEditable,
 } from "@/lib/auth/requireTeacher";
 
@@ -47,8 +46,13 @@ export async function POST(req: NextRequest) {
   if (!name) return apiError("Nombre requerido");
   const email = body.email ? String(body.email) : null;
   const grade = body.grade != null && String(body.grade).trim() !== "" ? String(body.grade).trim() : null;
-  const [created] = await db.insert(schema.students).values({ name, email, grade }).returning();
-  await linkStudentToTeacher(auth.teacher.id, created.id);
+  const created = await db.transaction(async (tx) => {
+    const [student] = await tx.insert(schema.students).values({ name, email, grade }).returning();
+    await tx
+      .insert(schema.teacherStudents)
+      .values({ teacherId: auth.teacher.id, studentId: student.id });
+    return student;
+  });
   return Response.json(created, { status: 201 });
 }
 

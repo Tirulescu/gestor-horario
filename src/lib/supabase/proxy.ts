@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { checkRateLimit, isAllowedMutationOrigin, isBodyTooLarge } from "@/lib/rateLimit";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -28,16 +29,36 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
+  const isApiRoute = pathname.startsWith("/api/");
   const isAuthRoute = pathname.startsWith("/login") || pathname.startsWith("/auth");
   const isPublicPwaRoute =
     pathname === "/manifest.webmanifest" ||
     pathname.startsWith("/serwist/") ||
     pathname.startsWith("/~offline");
 
-  if (!user && !isAuthRoute && !isPublicPwaRoute) {
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  if (isApiRoute || pathname.startsWith("/auth/")) {
+    const rate = checkRateLimit(request);
+    if (!rate.ok) {
+      return NextResponse.json(
+        { error: "Demasiadas peticiones. Inténtalo en un momento." },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfter) } },
+      );
     }
+    if (isApiRoute && !isAllowedMutationOrigin(request)) {
+      return NextResponse.json({ error: "Origen no permitido" }, { status: 403 });
+    }
+    if (isApiRoute && isBodyTooLarge(request)) {
+      return NextResponse.json({ error: "Payload demasiado grande" }, { status: 413 });
+    }
+  }
+
+  // Las API validan auth en el handler (requireTeacher). Evitar 401 aquí:
+  // con muchas peticiones paralelas el refresh de cookies puede fallar en el proxy.
+  if (isApiRoute) {
+    return supabaseResponse;
+  }
+
+  if (!user && !isAuthRoute && !isPublicPwaRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", pathname);

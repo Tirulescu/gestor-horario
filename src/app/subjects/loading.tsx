@@ -1,9 +1,4 @@
-import { SubjectListSkeleton } from "@/components/skeletons";
-
+/** Sin skeleton de ruta: el cliente pinta desde caché al instante. */
 export default function Loading() {
-  return (
-    <div className="page-stack">
-      <SubjectListSkeleton count={4} />
-    </div>
-  );
+  return null;
 }

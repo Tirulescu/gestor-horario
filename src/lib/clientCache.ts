@@ -1,6 +1,7 @@
 "use client";
 
-// localStorage solo acelera el primer pintado; el servidor es la fuente de verdad.
+// Memoria acelera la navegación SPA; localStorage solo sirve dentro de la misma sesión
+// (se borra en recarga completa F5 para siempre pedir datos frescos al servidor).
 const KEY = "__gestorHorarioCache";
 const STALE_KEY = "__gestorHorarioStale";
 const FETCHED_AT_KEY = "__gestorHorarioFetchedAt";
@@ -68,7 +69,23 @@ function clearStale(key: string) {
   persistStale(s);
 }
 
+function clearPersistedCacheOnFullReload() {
+  if (typeof window === "undefined") return;
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith(LS_PREFIX)) toRemove.push(k);
+    }
+    for (const k of toRemove) localStorage.removeItem(k);
+    localStorage.removeItem(STALE_KEY);
+    staleCache = new Set();
+  } catch {}
+}
+
 if (typeof window !== "undefined") {
+  clearPersistedCacheOnFullReload();
+
   try {
     const legacy = localStorage.getItem("__gestorHorarioMut");
     if (legacy) {
@@ -130,20 +147,37 @@ function peekSession<T>(key: string): T | null {
   }
 }
 
+function isApiErrorPayload(data: unknown): data is { error: string } {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    !Array.isArray(data) &&
+    typeof (data as { error?: unknown }).error === "string"
+  );
+}
+
 /** Cache válida para pintar al instante. Usar en useEffect, no en useState inicial. */
 export function warmData<T>(key: string): T | null {
   if (staleKeys().has(key)) return null;
   const mem = peek<T>(key);
+  const pick = (value: T | null): T | null => {
+    if (value === null) return null;
+    if (isApiErrorPayload(value)) return null;
+    return value;
+  };
   if (mem !== null) {
+    const valid = pick(mem);
+    if (valid === null) return null;
     if (!fetchedAtStore()[key]) fetchedAtStore()[key] = Date.now();
-    return mem;
+    return valid;
   }
   const persisted = peekSession<T>(key);
-  if (persisted !== null) {
-    store()[key] = persisted;
+  const validPersisted = pick(persisted);
+  if (validPersisted !== null) {
+    store()[key] = validPersisted;
     if (!fetchedAtStore()[key]) fetchedAtStore()[key] = Date.now();
   }
-  return persisted;
+  return validPersisted;
 }
 
 /** True si hay caché usable (no invalidada). */
@@ -176,6 +210,17 @@ export function needsRefresh(
   return now - newest > maxAgeMs;
 }
 
+async function fetchJson(url: string): Promise<{ ok: true; data: unknown } | { ok: false }> {
+  try {
+    const res = await fetch(url, { credentials: "same-origin" });
+    const data: unknown = await res.json();
+    if (!res.ok || isApiErrorPayload(data)) return { ok: false };
+    return { ok: true, data };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /** Fetch + put de un endpoint si falta o force. Devuelve los datos. */
 export async function revalidate<T = unknown>(
   url: string,
@@ -184,13 +229,12 @@ export async function revalidate<T = unknown>(
   if (!opts.force && hasFresh(url)) {
     return warmData<T>(url);
   }
-  try {
-    const data = (await fetch(url).then((r) => r.json())) as T;
-    put(url, data);
-    return data;
-  } catch {
-    return warmData<T>(url);
+  const result = await fetchJson(url);
+  if (result.ok) {
+    put(url, result.data);
+    return result.data as T;
   }
+  return warmData<T>(url);
 }
 
 /** Prefetch en background solo si la key no está fresca. */
@@ -198,10 +242,9 @@ export function prefetchEndpoints(urls: readonly string[]) {
   if (typeof window === "undefined") return;
   for (const url of urls) {
     if (hasFresh(url)) continue;
-    fetch(url)
-      .then((r) => r.json())
-      .then((d) => put(url, d))
-      .catch(() => {});
+    void fetchJson(url).then((result) => {
+      if (result.ok) put(url, result.data);
+    });
   }
 }
 
@@ -281,10 +324,9 @@ export function prefetchAll(opts: { delayMs?: number; skip?: readonly string[] }
     for (const url of WARM_ENDPOINTS) {
       if (skip.has(url)) continue;
       if (warmData(url) !== null) continue;
-      fetch(url)
-        .then((r) => r.json())
-        .then((d) => put(url, d))
-        .catch(() => {});
+      void fetchJson(url).then((result) => {
+        if (result.ok) put(url, result.data);
+      });
     }
   };
 

@@ -8,7 +8,7 @@ export const HOURS_END = SCHEDULE_HOURS_END;
 export interface Teacher { id: number; name: string; email?: string | null; scheduleFixed?: boolean; }
 export interface Subject {
   id: number; name: string; teacherId: number; defaultDurationMin: number;
-  isCollective?: boolean; scheduleFixed?: boolean;
+  isCollective?: boolean; scheduleFixed?: boolean; color?: string | null;
 }
 export interface TeacherBlock { id: number; teacherId: number; title: string; dayOfWeek: number; startHour: number; endHour: number; }
 export interface Availability { id: number; teacherId: number; dayOfWeek: number; startHour: number; endHour: number; }
@@ -22,6 +22,7 @@ export interface SubjectStudent {
   subjectId: number;
   studentId: number;
   durationMin: number | null;
+  slotsRequired?: number;
 }
 export interface Assignment {
   id: number; teacherId: number; subjectId: number; studentId: number;

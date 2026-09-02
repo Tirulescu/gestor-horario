@@ -22,12 +22,14 @@ function BottomNavInner() {
   }, [pathname]);
 
   const displayPath = pendingPath ?? pathname;
-  const activeIndex = Math.max(
-    0,
-    items.findIndex((item) => item.isActive(displayPath)),
-  );
+  const matchedIndex = items.findIndex((item) => item.isActive(displayPath));
+  const activeIndex = matchedIndex >= 0 ? matchedIndex : null;
 
   useLayoutEffect(() => {
+    if (activeIndex === null) {
+      setPill(null);
+      return;
+    }
     const nav = navRef.current;
     const item = itemRefs.current[activeIndex];
     if (!nav || !item) return;
@@ -72,7 +74,7 @@ function BottomNavInner() {
       )}
       {items.map((item, index) => {
         const Icon = item.icon;
-        const active = index === activeIndex;
+        const active = activeIndex !== null && index === activeIndex;
         return (
           <Link
             key={item.label}
@@ -108,6 +110,8 @@ function BottomNavInner() {
                 height: itemRect.height,
               });
             }}
+            onMouseEnter={() => prefetchRoute(item.href)}
+            onFocus={() => prefetchRoute(item.href)}
           >
             <span className="dock-item-inner">
               <Icon size={20} strokeWidth={active ? 2.4 : 2} />

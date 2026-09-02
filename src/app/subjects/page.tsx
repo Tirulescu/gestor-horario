@@ -1,9 +1,14 @@
 "use client";
 
 import { warmData, put, invalidate } from "@/lib/clientCache";
+import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Pencil, Trash2, Save, X, BookOpen, Clock, ChevronRight, Users } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
+import FloatingActionButton from "@/components/FloatingActionButton";
+import SubjectColorPicker from "@/components/SubjectColorPicker";
+import { SUBJECT_COLOR_PRESETS } from "@/lib/subjectColors";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -27,22 +32,31 @@ interface Subject {
   teacherId: number;
   defaultDurationMin: number;
   isCollective?: boolean;
+  color?: string | null;
   subjectStudents?: { id: number; durationMin: number | null }[];
   subjectGradeDurations?: { id: number; durationMin: number }[];
 }
 
 export default function SubjectsPage() {
   const toast = useToast();
-  const [subjects, setSubjects] = useState<Subject[] | null>(null);
+  const [subjects, setSubjects] = useState<Subject[] | null>(() => {
+    if (typeof window === "undefined") return null;
+    return warmData<Subject[]>("/api/subjects");
+  });
   const [name, setName] = useState("");
   const [defaultDurationMin, setDefaultDurationMin] = useState("60");
   const [isCollective, setIsCollective] = useState(false);
+  const [subjectColor, setSubjectColor] = useState<string>(SUBJECT_COLOR_PRESETS[0]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<number | null>(null);
-  const [scheduleLocked, setScheduleLocked] = useState(false);
+  const [scheduleLocked, setScheduleLocked] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+    return Boolean(cachedTeachers?.[0]?.scheduleFixed);
+  });
 
   async function load() {
     const cached = warmData<Subject[]>("/api/subjects");
@@ -71,6 +85,12 @@ export default function SubjectsPage() {
 
   useEffect(() => { load(); }, []);
 
+  useEffect(() => {
+    const onLock = () => { void load(); };
+    window.addEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
+    return () => window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
+  }, []);
+
   const visibleSubjects = subjects ?? [];
 
   function openNew() {
@@ -78,6 +98,7 @@ export default function SubjectsPage() {
     setName("");
     setDefaultDurationMin("60");
     setIsCollective(false);
+    setSubjectColor(SUBJECT_COLOR_PRESETS[0]);
     setFormOpen(true);
   }
 
@@ -86,6 +107,7 @@ export default function SubjectsPage() {
     setName(s.name);
     setDefaultDurationMin(String(s.defaultDurationMin));
     setIsCollective(Boolean(s.isCollective));
+    setSubjectColor(s.color ?? SUBJECT_COLOR_PRESETS[0]);
     setFormOpen(true);
   }
 
@@ -95,6 +117,7 @@ export default function SubjectsPage() {
     setName("");
     setDefaultDurationMin("60");
     setIsCollective(false);
+    setSubjectColor(SUBJECT_COLOR_PRESETS[0]);
   }
 
   async function submit(e: React.FormEvent) {
@@ -106,7 +129,8 @@ export default function SubjectsPage() {
         original &&
         name === original.name &&
         Number(defaultDurationMin) === original.defaultDurationMin &&
-        isCollective === Boolean(original.isCollective)
+        isCollective === Boolean(original.isCollective) &&
+        subjectColor === (original.color ?? SUBJECT_COLOR_PRESETS[0])
       ) {
         closeForm();
         return;
@@ -117,6 +141,7 @@ export default function SubjectsPage() {
       name,
       defaultDurationMin: Number(defaultDurationMin),
       isCollective,
+      color: subjectColor,
       ...(editingId ? { id: editingId } : {}),
     };
     const res = await fetch("/api/subjects", {
@@ -156,31 +181,37 @@ export default function SubjectsPage() {
       <PageHeader
         icon={BookOpen}
         title="Asignaturas"
-        description="Materias, duración y alumnos."
-        actions={
-          !scheduleLocked ? (
-            <Button onClick={openNew}>
-              <Plus size={16} />
-              <span className="hidden sm:inline">Nueva asignatura</span>
-            </Button>
-          ) : undefined
-        }
+        description="Configura materias, duración y alumnos inscritos."
+        actions={undefined}
       />
 
       {subjects === null ? (
         <SubjectListSkeleton count={4} />
       ) : visibleSubjects.length === 0 ? (
-        <div className="entity-card text-gray-400 text-sm">No hay asignaturas aún</div>
+        <EmptyState
+          icon={BookOpen}
+          title="No hay asignaturas aún"
+          description="Crea tu primera asignatura para empezar a organizar clases."
+          {...(!scheduleLocked ? {
+            actionLabel: "Crear asignatura",
+            onAction: openNew,
+          } : {})}
+        />
       ) : (
         <div className="entity-list">
           {visibleSubjects.map((s) => {
             const studentCount = s.subjectStudents?.length ?? 0;
+            const swatchColor = s.color ?? SUBJECT_COLOR_PRESETS[s.id % SUBJECT_COLOR_PRESETS.length];
             return (
               <article key={s.id} className="entity-card">
                 <Link href={`/subjects/${s.id}`} className="entity-card-link">
                   <div className="entity-card-link-row">
                     <div className="entity-card-link-title">
-                      <span className="entity-card-link-icon" aria-hidden>
+                      <span
+                        className="entity-card-link-icon"
+                        aria-hidden
+                        style={{ backgroundColor: `${swatchColor}18`, color: swatchColor }}
+                      >
                         <BookOpen size={18} />
                       </span>
                       <div className="min-w-0">
@@ -265,6 +296,7 @@ export default function SubjectsPage() {
               </div>
               <Switch id="is-collective" checked={isCollective} onCheckedChange={setIsCollective} />
             </div>
+            <SubjectColorPicker value={subjectColor} onChange={setSubjectColor} />
           </form>
           <DialogFooter>
             <Button variant="outline" type="button" onClick={closeForm} disabled={loading}><X size={14} /> Cancelar</Button>
@@ -293,6 +325,10 @@ export default function SubjectsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {!scheduleLocked && (
+        <FloatingActionButton onClick={openNew} aria-label="Nueva asignatura" />
+      )}
     </div>
   );
 }

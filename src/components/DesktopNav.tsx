@@ -37,6 +37,8 @@ function NavLink({
         onNavigate(item.href);
         prefetchRoute(item.href);
       }}
+      onMouseEnter={() => prefetchRoute(item.href)}
+      onFocus={() => prefetchRoute(item.href)}
     >
       <Icon size={17} strokeWidth={active ? 2.4 : 2} />
       <span>{item.label}</span>

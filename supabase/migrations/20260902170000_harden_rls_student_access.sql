@@ -101,6 +101,8 @@ CREATE POLICY assignments_teacher ON assignments
 -- ── subject_grade_durations ─────────────────────────────────────────────────
 ALTER TABLE subject_grade_durations ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS subject_grade_durations_teacher ON subject_grade_durations;
+
 CREATE POLICY subject_grade_durations_teacher ON subject_grade_durations
   FOR ALL TO authenticated
   USING (

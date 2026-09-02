@@ -1,6 +1,12 @@
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { SCHEDULE_DAY_END, SCHEDULE_DAY_START } from "@/lib/hours";
+import { DAYS } from "@/lib/validate";
+
+/** Mismo mínimo que WeekGrid cuando el día no tiene bloques. */
+const EMPTY_DAY_MIN_PX = 72;
+const DEFAULT_HOUR_HEIGHT = 84;
 
 export function CardSkeleton({
   rows = 3,
@@ -129,8 +135,146 @@ export function SubjectDetailSkeleton() {
   );
 }
 
-export function WeekGridSkeleton() {
-  return <CardSkeleton rows={1} rowClassName="h-[32rem]" />;
+export function WeekGridSkeleton({
+  expandMobile = true,
+  allowFullscreen = true,
+  startH = SCHEDULE_DAY_START,
+  endH = SCHEDULE_DAY_END,
+  hourHeight = DEFAULT_HOUR_HEIGHT,
+}: {
+  expandMobile?: boolean;
+  allowFullscreen?: boolean;
+  startH?: number;
+  endH?: number;
+  hourHeight?: number;
+} = {}) {
+  const todayIdx = (new Date().getDay() + 6) % 7;
+  const totalHours = endH - startH;
+  const bodyHeight = totalHours * hourHeight;
+  const dayWidths = Array.from({ length: 7 }, () => EMPTY_DAY_MIN_PX);
+  const gridContentMinPx = dayWidths.reduce((sum, w) => sum + w, 0);
+  const colTemplate = `var(--weekgrid-gutter, 52px) ${dayWidths.map((px) => `${px}px`).join(" ")}`;
+  const gridMinWidth = `calc(var(--weekgrid-gutter) + ${gridContentMinPx}px)`;
+  const hours = Array.from({ length: totalHours }, (_, i) => startH + i);
+
+  const gridContent = (
+    <div className="weekgrid-inner space-y-3">
+      <div className="card weekgrid-pro-wrap p-0">
+        <div className="weekgrid-pro">
+          <div className="weekgrid-pro-header-scroll">
+            <div
+              className="weekgrid-pro-header"
+              style={{
+                display: "grid",
+                gridTemplateColumns: colTemplate,
+                width: gridMinWidth,
+                minWidth: gridMinWidth,
+              }}
+            >
+              <div className="weekgrid-pro-corner">
+                <Skeleton className="mx-auto h-3 w-8" />
+              </div>
+              {DAYS.map((d, day) => (
+                <div
+                  key={d}
+                  className={"weekgrid-pro-day" + (day === todayIdx ? " is-today" : "")}
+                >
+                  <Skeleton className="mx-auto h-3.5 w-7" />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="weekgrid-pro-body-scroll">
+            <div
+              className="weekgrid-pro-body"
+              style={{
+                display: "grid",
+                gridTemplateColumns: colTemplate,
+                position: "relative",
+                width: gridMinWidth,
+                minWidth: gridMinWidth,
+              }}
+            >
+              <div className="weekgrid-pro-gutter" style={{ position: "relative", height: bodyHeight }}>
+                {hours.map((h) => (
+                  <div
+                    key={h}
+                    className="weekgrid-pro-hour"
+                    style={{
+                      position: "absolute",
+                      top: (h - startH) * hourHeight,
+                      height: hourHeight,
+                    }}
+                  >
+                    <Skeleton className="ml-auto mr-1 h-3 w-8" />
+                  </div>
+                ))}
+              </div>
+              {DAYS.map((d, dayIndex) => (
+                <div
+                  key={d}
+                  className={"weekgrid-pro-col" + (dayIndex === todayIdx ? " is-today-col" : "")}
+                  style={{ position: "relative", height: bodyHeight }}
+                >
+                  {hours.map((h) => (
+                    <div key={h}>
+                      <div
+                        className="weekgrid-pro-line"
+                        style={{
+                          position: "absolute",
+                          top: (h - startH) * hourHeight,
+                          height: hourHeight,
+                        }}
+                      />
+                      <div
+                        className="weekgrid-pro-half-line"
+                        style={{
+                          position: "absolute",
+                          top: (h - startH) * hourHeight + hourHeight / 2,
+                          left: 0,
+                          right: 0,
+                        }}
+                      />
+                    </div>
+                  ))}
+                  {dayIndex % 2 === 0 && (
+                    <Skeleton
+                      className="absolute left-[3px] right-[3px] rounded-md opacity-80"
+                      style={{ top: hourHeight * 2.5, height: hourHeight * 1.25 }}
+                    />
+                  )}
+                  {dayIndex % 3 === 1 && (
+                    <Skeleton
+                      className="absolute left-[3px] right-[3px] rounded-md opacity-70"
+                      style={{ top: hourHeight * 6, height: hourHeight * 1.75 }}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="weekgrid-root" aria-busy="true" aria-label="Cargando calendario">
+      {allowFullscreen && (
+        <div className="weekgrid-toolbar">
+          <Skeleton className="h-[2.05rem] w-[5.5rem] rounded-lg" aria-hidden />
+        </div>
+      )}
+      {expandMobile ? (
+        <>
+          <div className="weekgrid-scroll-sentinel" aria-hidden />
+          <div className="weekgrid-expand-mobile">{gridContent}</div>
+        </>
+      ) : (
+        gridContent
+      )}
+    </div>
+  );
 }
 
 export function ChipGroupSkeleton({ count = 3 }: { count?: number }) {
@@ -183,12 +327,13 @@ export function AuthMenuSkeleton() {
   return <Skeleton className="h-9 w-9 rounded-full sm:h-9 sm:w-28 sm:rounded-lg" aria-hidden />;
 }
 
-export function HeaderActionsSkeleton() {
+export function HeaderActionsSkeleton({ count = 3 }: { count?: number }) {
+  const widths = ["w-32", "w-40", "w-28"];
   return (
     <div className="flex flex-wrap gap-2 items-center" aria-busy="true">
-      <Skeleton className="h-11 w-32 rounded-[0.6rem]" />
-      <Skeleton className="h-11 w-40 rounded-[0.6rem]" />
-      <Skeleton className="h-11 w-28 rounded-[0.6rem]" />
+      {Array.from({ length: count }).map((_, i) => (
+        <Skeleton key={i} className={cn("h-11 rounded-[0.6rem]", widths[i % widths.length])} />
+      ))}
     </div>
   );
 }

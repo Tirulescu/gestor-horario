@@ -33,9 +33,17 @@ pnpm dev
 
 1. Crear proyecto en [supabase.com](https://supabase.com)
 2. **Authentication → Providers → Google**: activar y pegar `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
-3. **Project Settings → Database**: copiar la connection string (Session pooler, puerto 6543) a `DATABASE_URL`
-4. **API**: copiar URL y publishable key a las variables `NEXT_PUBLIC_*`
-5. Aplicar la migración RLS: `supabase/migrations/20260901120000_teacher_isolation_rls.sql` (vía SQL Editor o CLI)
+3. **Authentication → URL Configuration**:
+   - **Site URL**: dominio de producción (p. ej. `https://tu-app.vercel.app`)
+   - **Redirect URLs** (añadir todas las que uses en local; usa `/**` para rutas como `/auth/callback`):
+     - `http://localhost:3000/**`
+     - `http://127.0.0.1:3000/**`
+     - `https://gestor-horario.vercel.app/**`
+   - `http://localhost:3000` sin wildcard **no** vale para `/auth/callback` — Supabase te manda al Site URL.
+4. **Project Settings → Database**: copiar la connection string (Session pooler, puerto 6543) a `DATABASE_URL`
+5. **API**: copiar URL y publishable key a las variables `NEXT_PUBLIC_*`
+6. En `.env` local: `NEXT_PUBLIC_APP_URL=http://localhost:3000` (mismo host con el que abres la app)
+7. Aplicar la migración RLS: `supabase/migrations/20260901120000_teacher_isolation_rls.sql` (vía SQL Editor o CLI)
 
 La app Next.js usa `DATABASE_URL` (rol postgres) en las API routes; la autorización está en `src/lib/auth/requireTeacher.ts`. Las políticas RLS protegen el acceso directo vía PostgREST.
 

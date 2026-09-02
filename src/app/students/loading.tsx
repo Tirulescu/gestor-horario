@@ -1,9 +1,4 @@
-import { TableCardSkeleton } from "@/components/skeletons";
-
+/** Sin skeleton de ruta: el cliente pinta desde caché al instante. */
 export default function Loading() {
-  return (
-    <div className="page-stack">
-      <TableCardSkeleton rows={4} />
-    </div>
-  );
+  return null;
 }

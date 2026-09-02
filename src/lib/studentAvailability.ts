@@ -8,12 +8,13 @@ import {
   slotFitsMaxDuration,
 } from "./hours";
 import { mergeIntervals } from "./scheduleIntervals";
+import { MAX_SCHEDULE_RANGES } from "./validate";
 /** Franja horaria semanal: day 0=Lun … 6=Dom, start/end en horas decimales. */
 export type TimeRange = { day: number; start: number; end: number; title?: string };
 
 export function normalizeRanges(raw: unknown): TimeRange[] {
   if (!Array.isArray(raw)) return [];
-  return raw
+  return raw.slice(0, MAX_SCHEDULE_RANGES)
     .map((b: { day?: unknown; start?: unknown; end?: unknown }) => ({
       day: Number(b.day),
       start: Number(b.start),
@@ -33,7 +34,7 @@ export function normalizeRanges(raw: unknown): TimeRange[] {
 /** Igual que normalizeRanges, pero conserva un título opcional (bloqueos). */
 export function normalizeBlockedRanges(raw: unknown): TimeRange[] {
   if (!Array.isArray(raw)) return [];
-  return raw
+  return raw.slice(0, MAX_SCHEDULE_RANGES)
     .map((b: { day?: unknown; start?: unknown; end?: unknown; title?: unknown }) => {
       const title = typeof b.title === "string" ? b.title.trim() : "";
       return {

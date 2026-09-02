@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { apiError, safeJson, validateDay, validateHourRange } from "@/lib/validate";
 import {
   requireTeacher,
@@ -8,6 +8,24 @@ import {
   assertAvailabilityOwned,
   assertScheduleEditable,
 } from "@/lib/auth/requireTeacher";
+
+type AvailabilityPiece = { dayOfWeek: number; startHour: number; endHour: number };
+
+function parsePieces(raw: unknown): AvailabilityPiece[] | string {
+  if (!Array.isArray(raw)) return "pieces debe ser un array";
+  const out: AvailabilityPiece[] = [];
+  for (const item of raw) {
+    const dayOfWeek = Number((item as { day?: unknown; dayOfWeek?: unknown }).dayOfWeek ?? (item as { day?: unknown }).day);
+    const startHour = Number((item as { start?: unknown; startHour?: unknown }).startHour ?? (item as { start?: unknown }).start);
+    const endHour = Number((item as { end?: unknown; endHour?: unknown }).endHour ?? (item as { end?: unknown }).end);
+    const dErr = validateDay(dayOfWeek);
+    if (dErr) return dErr;
+    const hErr = validateHourRange(startHour, endHour);
+    if (hErr) return hErr;
+    out.push({ dayOfWeek, startHour, endHour });
+  }
+  return out;
+}
 
 export async function GET(req: NextRequest) {
   const auth = await requireTeacher();
@@ -92,4 +110,84 @@ export async function PATCH(req: NextRequest) {
     .where(eq(schema.availabilities.id, id))
     .returning();
   return Response.json(updated);
+}
+
+/** Operaciones atómicas: sustituir una franja por varias, o borrar/crear en lote. */
+export async function PUT(req: NextRequest) {
+  const auth = await requireTeacher();
+  if (!auth.ok) return auth.response;
+  const locked = assertScheduleEditable(auth.teacher);
+  if (locked) return locked;
+
+  const body = (await safeJson(req)) as {
+    replace?: { id?: unknown; pieces?: unknown };
+    apply?: { removeIds?: unknown; adds?: unknown };
+  };
+
+  if (body.replace != null) {
+    const id = Number(body.replace.id);
+    if (!id) return apiError("replace.id requerido");
+    const denied = await assertAvailabilityOwned(id, auth.teacher.id);
+    if (denied) return denied;
+
+    const row = await db.query.availabilities.findFirst({ where: eq(schema.availabilities.id, id) });
+    if (!row) return apiError("No encontrada", 404);
+
+    const parsed = parsePieces(body.replace.pieces ?? []);
+    if (typeof parsed === "string") return apiError(parsed);
+
+    const result = await db.transaction(async (tx) => {
+      if (parsed.length === 0) {
+        await tx.delete(schema.availabilities).where(eq(schema.availabilities.id, id));
+        return { removed: 1, saved: 0, rows: [] as (typeof schema.availabilities.$inferSelect)[] };
+      }
+      if (parsed.length === 1) {
+        const [updated] = await tx
+          .update(schema.availabilities)
+          .set(parsed[0])
+          .where(eq(schema.availabilities.id, id))
+          .returning();
+        return { removed: 0, saved: 1, rows: updated ? [updated] : [] };
+      }
+      const rows = await tx
+        .insert(schema.availabilities)
+        .values(parsed.map((p) => ({ teacherId: row.teacherId, ...p })))
+        .returning();
+      await tx.delete(schema.availabilities).where(eq(schema.availabilities.id, id));
+      return { removed: 1, saved: rows.length, rows };
+    });
+
+    return Response.json(result);
+  }
+
+  if (body.apply != null) {
+    const removeIds = Array.isArray(body.apply.removeIds)
+      ? body.apply.removeIds.map((x: unknown) => Number(x)).filter((n: number) => Number.isInteger(n) && n > 0)
+      : [];
+    const parsed = parsePieces(body.apply.adds ?? []);
+    if (typeof parsed === "string") return apiError(parsed);
+
+    for (const id of removeIds) {
+      const denied = await assertAvailabilityOwned(id, auth.teacher.id);
+      if (denied) return denied;
+    }
+
+    const result = await db.transaction(async (tx) => {
+      if (removeIds.length > 0) {
+        await tx.delete(schema.availabilities).where(inArray(schema.availabilities.id, removeIds));
+      }
+      const rows =
+        parsed.length > 0
+          ? await tx
+              .insert(schema.availabilities)
+              .values(parsed.map((p) => ({ teacherId: auth.teacher.id, ...p })))
+              .returning()
+          : [];
+      return { removed: removeIds.length, saved: rows.length, rows };
+    });
+
+    return Response.json(result);
+  }
+
+  return apiError("replace o apply requerido");
 }

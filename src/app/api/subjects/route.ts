@@ -3,6 +3,7 @@ import { db, schema } from "@/db";
 import { eq } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
 import { durationMinError } from "@/lib/hours";
+import { normalizeSubjectColor, subjectColorError } from "@/lib/subjectColors";
 import { requireTeacher, assertOwnTeacher, assertSubjectOwned, assertScheduleEditable } from "@/lib/auth/requireTeacher";
 
 export async function GET(req: NextRequest) {
@@ -40,7 +41,18 @@ export async function POST(req: NextRequest) {
   const dErr = durationMinError(defaultDurationMin);
   if (dErr) return apiError(dErr);
   const isCollective = Boolean(body.isCollective);
-  const [created] = await db.insert(schema.subjects).values({ name, teacherId, defaultDurationMin, isCollective }).returning();
+  if (body.color !== undefined) {
+    const cErr = subjectColorError(body.color);
+    if (cErr) return apiError(cErr);
+  }
+  const color = body.color !== undefined ? normalizeSubjectColor(body.color) : undefined;
+  const [created] = await db.insert(schema.subjects).values({
+    name,
+    teacherId,
+    defaultDurationMin,
+    isCollective,
+    ...(color !== undefined ? { color } : {}),
+  }).returning();
   return Response.json(created, { status: 201 });
 }
 
@@ -66,6 +78,11 @@ export async function PUT(req: NextRequest) {
   const dErr = durationMinError(defaultDurationMin);
   if (dErr) return apiError(dErr);
   const isCollective = body.isCollective !== undefined ? Boolean(body.isCollective) : undefined;
+  if (body.color !== undefined) {
+    const cErr = subjectColorError(body.color);
+    if (cErr) return apiError(cErr);
+  }
+  const color = body.color !== undefined ? normalizeSubjectColor(body.color) : undefined;
   const [updated] = await db
     .update(schema.subjects)
     .set({
@@ -73,6 +90,7 @@ export async function PUT(req: NextRequest) {
       teacherId,
       defaultDurationMin,
       ...(isCollective !== undefined ? { isCollective } : {}),
+      ...(color !== undefined ? { color } : {}),
     })
     .where(eq(schema.subjects.id, id))
     .returning();
@@ -92,11 +110,16 @@ export async function PATCH(req: NextRequest) {
   const deniedSubject = await assertSubjectOwned(id, auth.teacher.id);
   if (deniedSubject) return deniedSubject;
 
-  const patch: Partial<{ scheduleFixed: boolean; isCollective: boolean }> = {};
+  const patch: Partial<{ scheduleFixed: boolean; isCollective: boolean; color: string | null }> = {};
   if (body.scheduleFixed !== undefined) {
     patch.scheduleFixed = Boolean(body.scheduleFixed);
   }
   if (body.isCollective !== undefined) patch.isCollective = Boolean(body.isCollective);
+  if (body.color !== undefined) {
+    const cErr = subjectColorError(body.color);
+    if (cErr) return apiError(cErr);
+    patch.color = normalizeSubjectColor(body.color);
+  }
   if (Object.keys(patch).length === 0) return apiError("Nada que actualizar");
 
   const [updated] = await db

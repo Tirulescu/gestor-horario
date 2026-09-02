@@ -3,9 +3,10 @@
 import { useMemo } from "react";
 import { CheckCircle2, Sparkles, Users, XCircle, Clock, CalendarDays } from "lucide-react";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { DAYS } from "@/lib/validate";
 import { fmtRange } from "@/lib/hours";
 import type {
@@ -78,6 +79,9 @@ interface AutoScheduleResultDialogProps {
   result: AutoScheduleResult | null;
   onClose: () => void;
   subjectColors?: Record<number, string>;
+  mode?: "preview" | "applied";
+  onApply?: () => void;
+  applying?: boolean;
 }
 
 function SummaryStat({
@@ -195,8 +199,12 @@ export default function AutoScheduleResultDialog({
   result,
   onClose,
   subjectColors = {},
+  mode = "applied",
+  onApply,
+  applying = false,
 }: AutoScheduleResultDialogProps) {
   const open = result !== null;
+  const isPreview = mode === "preview" || Boolean(result?.simulated);
   const assigned = result?.assigned ?? [];
   const unassigned = result?.unassigned ?? [];
   const skipped = result?.skipped ?? [];
@@ -215,14 +223,18 @@ export default function AutoScheduleResultDialog({
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-blue-700 shrink-0">
                 <Sparkles size={17} />
               </span>
-              <span className="leading-snug pt-1">Resultado del auto-agendado</span>
+              <span className="leading-snug pt-1">
+                {isPreview ? "Resultado del auto-agendado" : "Horario aplicado"}
+              </span>
             </DialogTitle>
             <DialogDescription>
-              {placedCount > 0
-                ? `${placedCount} colocada${placedCount !== 1 ? "s" : ""}.`
-                : failedCount > 0
-                  ? "Ninguna clase colocada."
-                  : "Nada pendiente."}
+              {isPreview
+                ? "Revisa las clases propuestas. Si te encaja, aplícalas a tu horario."
+                : placedCount > 0
+                  ? `${placedCount} colocada${placedCount !== 1 ? "s" : ""} en tu horario.`
+                  : failedCount > 0
+                    ? "Ninguna clase colocada."
+                    : "Nada pendiente."}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -306,6 +318,25 @@ export default function AutoScheduleResultDialog({
             </section>
           )}
         </div>
+
+        {isPreview && onApply && (
+          <DialogFooter className="shrink-0 border-t border-gray-100 px-5 py-4">
+            <Button variant="outline" type="button" onClick={onClose} disabled={applying}>
+              Cancelar
+            </Button>
+            <Button type="button" loading={applying} onClick={onApply}>
+              Aplicar al horario
+            </Button>
+          </DialogFooter>
+        )}
+
+        {!isPreview && (
+          <DialogFooter className="shrink-0 border-t border-gray-100 px-5 py-4">
+            <Button type="button" onClick={onClose}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -1,16 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
-  Briefcase, Sparkles, CalendarClock,
+  CalendarDays, Sparkles, CalendarClock,
 } from "lucide-react";
 import WeekGrid, { type WeekBlock } from "@/components/WeekGrid";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
+import OnboardingChecklist, { countIncompleteSlotRequests } from "@/components/OnboardingChecklist";
+import TodayAgenda, { countTodaySessions } from "@/components/TodayAgenda";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import { WeekGridSkeleton } from "@/components/skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
+import { buildSubjectColorMap } from "@/lib/subjectColors";
+import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { SCHEDULE_DAY_START, SCHEDULE_DAY_END, endHourFromDuration, resolveMemberDurationMin } from "@/lib/hours";
 import { carveAvailabilityAroundBlocked, getFreeHourSetsForDays, normalizeRanges, type TimeRange } from "@/lib/studentAvailability";
 import { persistAvailabilityAdds, replaceAvailabilityPieces } from "@/lib/availabilityMutations";
@@ -24,14 +28,20 @@ import {
   put,
   warmData,
 } from "@/lib/clientCache";
+import { dashboardBootPending } from "@/lib/pageBoot";
 import {
-  COLORS, HOURS_START, HOURS_END,
+  HOURS_START, HOURS_END,
   type Teacher, type Subject, type TeacherBlock, type Availability,
   type Student, type SubjectStudent, type Assignment,
 } from "./types";
 import { buildTeacherBlockBlocks, buildAssignmentBlocks } from "./buildWeekBlocks";
 import AssignmentEditDialog from "./AssignmentEditDialog";
 import ConfirmDeleteDialogs from "./ConfirmDeleteDialogs";
+
+interface SlotRequestRow {
+  studentId: number;
+  subjectId: number;
+}
 
 function readDashboardCache() {
   const teachers = warmData<Teacher[]>("/api/teachers");
@@ -49,26 +59,52 @@ function readDashboardCache() {
   };
 }
 
+function getInitialDashboardState() {
+  const empty = {
+    teacher: null as Teacher | null,
+    subjects: [] as Subject[],
+    assignments: [] as Assignment[],
+    teacherBlocks: [] as TeacherBlock[],
+    availabilities: [] as Availability[],
+    students: [] as Student[],
+    subjectStudents: [] as SubjectStudent[],
+    slotRequests: [] as SlotRequestRow[],
+  };
+  if (typeof window === "undefined") return empty;
+  const cached = readDashboardCache();
+  if (!cached) return empty;
+  return {
+    ...cached,
+    students: warmData<Student[]>("/api/students") ?? [],
+    subjectStudents: warmData<SubjectStudent[]>("/api/subject_students") ?? [],
+    slotRequests: warmData<SlotRequestRow[]>("/api/slot_requests") ?? [],
+  };
+}
+
 export default function DashboardClient() {
   const toast = useToast();
+  const [initial] = useState(getInitialDashboardState);
 
-  const [teacher, setTeacher] = useState<Teacher | null>(null);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [teacher, setTeacher] = useState(initial.teacher);
+  const [subjects, setSubjects] = useState(initial.subjects);
+  const [assignments, setAssignments] = useState(initial.assignments);
   const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
   const [selectedCollectiveSession, setSelectedCollectiveSession] = useState<Assignment[] | null>(null);
-  const [teacherBlocks, setTeacherBlocks] = useState<TeacherBlock[]>([]);
-  const [availabilities, setAvailabilities] = useState<Availability[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [subjectStudents, setSubjectStudents] = useState<SubjectStudent[]>([]);
+  const [teacherBlocks, setTeacherBlocks] = useState(initial.teacherBlocks);
+  const [availabilities, setAvailabilities] = useState(initial.availabilities);
+  const [students, setStudents] = useState(initial.students);
+  const [subjectStudents, setSubjectStudents] = useState(initial.subjectStudents);
+  const [slotRequests, setSlotRequests] = useState(initial.slotRequests);
   const [confirmTb, setConfirmTb] = useState<TeacherBlock | null>(null);
   const [confirmDeleteAsg, setConfirmDeleteAsg] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [autoResult, setAutoResult] = useState<AutoScheduleResult | null>(null);
+  const [autoResultMode, setAutoResultMode] = useState<"preview" | "applied">("preview");
+  const [pendingAutoSubjectIds, setPendingAutoSubjectIds] = useState<number[] | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(dashboardBootPending);
 
   const [editAsgDay, setEditAsgDay] = useState("0");
   const [editAsgStart, setEditAsgStart] = useState("");
@@ -84,8 +120,10 @@ export default function DashboardClient() {
     setAvailabilities(cached.availabilities);
     const sts = warmData<Student[]>("/api/students");
     const ss = warmData<SubjectStudent[]>("/api/subject_students");
+    const sr = warmData<SlotRequestRow[]>("/api/slot_requests");
     if (sts) setStudents(sts);
     if (ss) setSubjectStudents(ss);
+    if (sr) setSlotRequests(sr);
     return true;
   }
 
@@ -99,7 +137,7 @@ export default function DashboardClient() {
     }
 
     try {
-      const [teachers, subs, asg, tb, av, sts, ss] = await Promise.all([
+      const [teachers, subs, asg, tb, av, sts, ss, sr] = await Promise.all([
         fetch("/api/teachers").then((r) => r.json()) as Promise<Teacher[]>,
         fetch("/api/subjects").then((r) => r.json()) as Promise<Subject[]>,
         fetch("/api/assignments").then((r) => r.json()) as Promise<Assignment[]>,
@@ -107,6 +145,7 @@ export default function DashboardClient() {
         fetch("/api/availabilities").then((r) => r.json()) as Promise<Availability[]>,
         fetch("/api/students").then((r) => r.json()) as Promise<Student[]>,
         fetch("/api/subject_students").then((r) => r.json()) as Promise<SubjectStudent[]>,
+        fetch("/api/slot_requests").then((r) => r.json()) as Promise<SlotRequestRow[]>,
       ]);
       setTeacher(teachers[0] ?? null);
       setSubjects(subs);
@@ -115,6 +154,7 @@ export default function DashboardClient() {
       setAvailabilities(av);
       setStudents(sts);
       setSubjectStudents(ss);
+      setSlotRequests(sr);
       put("/api/teachers", teachers);
       put("/api/subjects", subs);
       put("/api/assignments", asg);
@@ -122,10 +162,15 @@ export default function DashboardClient() {
       put("/api/availabilities", av);
       put("/api/students", sts);
       put("/api/subject_students", ss);
+      put("/api/slot_requests", sr);
     } finally {
       setLoading(false);
     }
   }
+
+  useLayoutEffect(() => {
+    if (hydrateFromCache()) setLoading(false);
+  }, []);
 
   useEffect(() => { void load(); }, []);
 
@@ -134,16 +179,19 @@ export default function DashboardClient() {
       if (document.visibilityState !== "visible") return;
       if (needsRefresh(DASHBOARD_ENDPOINTS)) void load({ force: true });
     };
+    const onLockChange = () => { void load({ force: true }); };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    window.addEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLockChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLockChange);
+    };
   }, []);
 
-  const subjectColor: Record<number, string> = useMemo(() => {
-    const m: Record<number, string> = {};
-    let ci = 0;
-    for (const s of subjects) m[s.id] = COLORS[ci++ % COLORS.length];
-    return m;
-  }, [subjects]);
+  const subjectColor: Record<number, string> = useMemo(
+    () => buildSubjectColorMap(subjects),
+    [subjects],
+  );
 
   const subjectNames: Record<number, string> = useMemo(() => {
     const m: Record<number, string> = {};
@@ -222,21 +270,46 @@ export default function DashboardClient() {
 
   const scheduleLocked = Boolean(teacher?.scheduleFixed);
 
-  async function autoScheduleSubjects(subjectIds?: number[]) {
-    setBusy(true); setAutoResult(null);
+  const incompleteRequests = useMemo(
+    () => countIncompleteSlotRequests(subjectStudents, slotRequests),
+    [subjectStudents, slotRequests],
+  );
+
+  async function runAutoSchedule(subjectIds?: number[], apply = false) {
+    setBusy(true);
+    const ids = subjectIds ?? pendingAutoSubjectIds;
+    if (!apply) setPendingAutoSubjectIds(subjectIds);
+
     const res = await fetch("/api/auto_schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(subjectIds?.length ? { subjectIds } : {}),
+      body: JSON.stringify({
+        ...(ids?.length ? { subjectIds: ids } : {}),
+        ...(!apply ? { simulate: true } : {}),
+      }),
     });
     setBusy(false);
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo auto-agendar");
     const data: AutoScheduleResult = await res.json();
     setAutoResult(data);
+    if (!apply) {
+      setAutoResultMode("preview");
+      return;
+    }
+    setAutoResultMode("applied");
+    setPendingAutoSubjectIds(undefined);
     const skipped = data.skipped?.length ?? 0;
-    toast("success", `Auto-agendar: ${data.assigned.length} colocados, ${data.unassigned.length} sin colocar${skipped ? `, ${skipped} omitidas` : ""}`);
+    toast("success", `Horario actualizado: ${data.assigned.length} colocados, ${data.unassigned.length} sin colocar${skipped ? `, ${skipped} omitidas` : ""}`);
     invalidateMany(["/api/assignments", "/api/subject_students"]);
     await load({ force: true });
+  }
+
+  async function autoScheduleSubjects(subjectIds?: number[]) {
+    await runAutoSchedule(subjectIds, false);
+  }
+
+  async function applyPreviewedSchedule() {
+    await runAutoSchedule(undefined, true);
   }
 
   async function deleteAssignment() {
@@ -473,39 +546,80 @@ export default function DashboardClient() {
     await load({ force: true });
   }
 
+  function headerDescription() {
+    if (loading) {
+      return <Skeleton className="h-4 w-52 max-w-full" aria-hidden />;
+    }
+    if (!teacher) return "—";
+    const todayCount = countTodaySessions(assignments);
+    return `${teacher.name} · ${todayCount} clase${todayCount !== 1 ? "s" : ""} hoy`;
+  }
+
+  function headerActions() {
+    if (scheduleLocked) return undefined;
+    return (
+      <>
+        <Button
+          variant="outline"
+          onClick={() => setManageOpen(true)}
+          disabled={loading}
+        >
+          <CalendarClock size={16} />
+          <span className="sm:hidden">Horario</span>
+          <span className="hidden sm:inline">Gestionar horario</span>
+        </Button>
+        <Button
+          onClick={() => autoScheduleSubjects()}
+          loading={busy}
+          disabled={loading || busy}
+          title="Calcula el horario y te deja revisarlo antes de aplicarlo"
+        >
+          <Sparkles size={16} />
+          <span className="sm:hidden">Auto-agendar</span>
+          <span className="hidden sm:inline">Auto-agendar todo</span>
+        </Button>
+      </>
+    );
+  }
+
   return (
     <div className="dashboard-stack">
       <PageHeader
-        icon={Briefcase}
-        title={loading ? <Skeleton className="inline-block h-7 w-40 align-middle" /> : (teacher?.name ?? "—")}
-        description="Clases, disponibilidad y eventos."
-        actions={
-          !loading && !scheduleLocked ? (
-            <>
-              <Button variant="outline" onClick={() => setManageOpen(true)}>
-                <CalendarClock size={16} />
-                <span className="sm:hidden">Horario</span>
-                <span className="hidden sm:inline">Gestionar horario</span>
-              </Button>
-              <Button
-                onClick={() => autoScheduleSubjects()}
-                loading={busy}
-                disabled={loading}
-                title="Auto-agenda todas las asignaturas no fijadas"
-              >
-                <Sparkles size={16} />
-                <span className="sm:hidden">Auto-agendar</span>
-                <span className="hidden sm:inline">Auto-agendar todo</span>
-              </Button>
-            </>
-          ) : undefined
-        }
+        icon={CalendarDays}
+        title="Mi horario"
+        description={headerDescription()}
+        actions={headerActions()}
       />
+
+      {!loading && !scheduleLocked && (
+        <OnboardingChecklist
+          data={{
+            subjectsCount: subjects.length,
+            studentsCount: students.length,
+            availabilitiesCount: availabilities.length,
+            incompleteRequests,
+            assignmentsCount: assignments.length,
+          }}
+          onOpenAvailability={() => setManageOpen(true)}
+          onAutoSchedule={() => autoScheduleSubjects()}
+        />
+      )}
+
+      {!loading && scheduleLocked && (
+        <TodayAgenda
+          assignments={assignments}
+          subjects={subjects}
+          students={students.map((s) => ({ id: s.id, name: s.name }))}
+        />
+      )}
 
       <AutoScheduleResultDialog
         result={autoResult}
         onClose={() => setAutoResult(null)}
         subjectColors={subjectColor}
+        mode={autoResultMode}
+        onApply={autoResultMode === "preview" ? applyPreviewedSchedule : undefined}
+        applying={busy}
       />
 
       {loading ? (

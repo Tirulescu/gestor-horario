@@ -26,4 +26,6 @@ export interface AutoScheduleResult {
   assigned: AutoScheduleAssigned[];
   unassigned: AutoScheduleUnassigned[];
   skipped?: { subjectId: number; subjectName: string; reason: string }[];
+  /** true cuando es una simulación sin persistir. */
+  simulated?: boolean;
 }

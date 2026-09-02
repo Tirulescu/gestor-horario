@@ -42,6 +42,8 @@ export const subjects = pgTable("subjects", {
   isCollective: boolean("is_collective").notNull().default(false),
   /** Si true, el auto-agendado no modifica las clases de esta asignatura. */
   scheduleFixed: boolean("schedule_fixed").notNull().default(false),
+  /** Color hex (#RRGGBB) para el calendario; null = preset automático. */
+  color: text("color"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

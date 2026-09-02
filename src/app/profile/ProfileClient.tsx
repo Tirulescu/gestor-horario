@@ -8,8 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/Toast";
-import { CardSkeleton } from "@/components/skeletons";
+import SetupGuidePanel from "@/components/SetupGuidePanel";
 import { warmData, put } from "@/lib/clientCache";
+import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 
 interface Teacher {
   id: number;
@@ -18,26 +19,35 @@ interface Teacher {
   scheduleFixed: boolean;
 }
 
+function getInitialTeacher(): Teacher | null {
+  if (typeof window === "undefined") return null;
+  const cached = warmData<Teacher[]>("/api/teachers");
+  return cached?.[0] ?? null;
+}
+
 export default function ProfileClient() {
   const toast = useToast();
-  const [teacher, setTeacher] = useState<Teacher | null>(null);
-  const [ready, setReady] = useState(false);
+  const [teacher, setTeacher] = useState(getInitialTeacher);
+  const [profilePending, setProfilePending] = useState(() => getInitialTeacher() === null);
   const [saving, setSaving] = useState(false);
 
   async function load() {
     const cached = warmData<Teacher[]>("/api/teachers");
     if (cached) {
       setTeacher(cached[0] ?? null);
-      setReady(true);
+      setProfilePending(false);
     }
-    const arr = await fetch("/api/teachers").then((r) => r.json()) as Teacher[];
-    const t = arr[0] ?? null;
-    setTeacher(t);
-    if (arr.length > 0) put("/api/teachers", arr);
-    setReady(true);
+    try {
+      const arr = await fetch("/api/teachers").then((r) => r.json()) as Teacher[];
+      const t = arr[0] ?? null;
+      setTeacher(t);
+      if (arr.length > 0) put("/api/teachers", arr);
+    } finally {
+      setProfilePending(false);
+    }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   async function toggleScheduleFixed(next: boolean) {
     if (!teacher) return;
@@ -56,34 +66,8 @@ export default function ProfileClient() {
     const updated: Teacher = await res.json();
     setTeacher(updated);
     put("/api/teachers", [updated]);
+    window.dispatchEvent(new Event(SCHEDULE_LOCK_CHANGED_EVENT));
     toast("success", next ? "Horario fijado" : "Auto-agendar habilitado");
-  }
-
-  if (!ready) {
-    return (
-      <div className="page-stack max-w-2xl">
-        <PageHeader
-          icon={User}
-          title="Mi perfil"
-          description="Cuenta y preferencias de horario."
-        />
-        <CardSkeleton rows={2} />
-        <CardSkeleton rows={2} />
-      </div>
-    );
-  }
-
-  if (!teacher) {
-    return (
-      <div className="page-stack max-w-2xl">
-        <PageHeader
-          icon={User}
-          title="Mi perfil"
-          description="Cuenta y preferencias de horario."
-        />
-        <Card className="p-5 text-sm text-gray-500">No se pudo cargar el perfil.</Card>
-      </div>
-    );
   }
 
   return (
@@ -94,22 +78,9 @@ export default function ProfileClient() {
         description="Cuenta y preferencias de horario."
       />
 
-      <Card className="p-5 space-y-4">
-        <h2 className="font-semibold text-sm text-gray-900">Datos personales</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <Label className="text-gray-500">Nombre</Label>
-            <p className="text-sm font-medium mt-1">{teacher.name}</p>
-          </div>
-          <div>
-            <Label className="text-gray-500">Correo</Label>
-            <p className="text-sm font-medium mt-1">{teacher.email || "—"}</p>
-          </div>
-        </div>
-        <p className="text-xs text-gray-500">Los datos provienen de tu cuenta de Google al iniciar sesión.</p>
-      </Card>
+      <SetupGuidePanel />
 
-      <Card className="p-5 space-y-4">
+      <Card className={`p-5 space-y-4 ${profilePending ? "profile-card-pending" : ""}`}>
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1 flex-1">
             <div className="flex items-center gap-2">
@@ -117,7 +88,7 @@ export default function ProfileClient() {
               <Label htmlFor="schedule-fixed" className="text-base font-semibold cursor-pointer mb-0">
                 Fijar horario
               </Label>
-              {teacher.scheduleFixed && <Badge variant="warn">Activo</Badge>}
+              {teacher?.scheduleFixed && <Badge variant="warn">Activo</Badge>}
             </div>
             <p id="schedule-fixed-desc" className="text-sm text-gray-500 leading-relaxed">
               Bloquea el auto-agendado y toda edición del plan (horarios, alumnos, asignaturas y solicitudes). Solo podrás consultar el detalle.
@@ -125,9 +96,9 @@ export default function ProfileClient() {
           </div>
           <Switch
             id="schedule-fixed"
-            checked={teacher.scheduleFixed}
+            checked={teacher?.scheduleFixed ?? false}
             onCheckedChange={toggleScheduleFixed}
-            disabled={saving}
+            disabled={profilePending || !teacher || saving}
             aria-describedby="schedule-fixed-desc"
           />
         </div>

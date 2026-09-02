@@ -6,6 +6,7 @@ import { CalendarClock } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
+import { buildAuthCallbackUrl } from "@/lib/appUrl";
 import { APP_NAME } from "@/lib/pwa";
 
 function GoogleIcon() {
@@ -40,7 +41,7 @@ export default function LoginForm() {
     setSigningIn(true);
     const supabase = createClient();
     const next = searchParams.get("next") ?? "/";
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+    const redirectTo = buildAuthCallbackUrl(next);
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",

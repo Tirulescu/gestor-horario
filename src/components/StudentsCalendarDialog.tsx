@@ -12,16 +12,12 @@ import WeekGrid, { type WeekBlock } from "@/components/WeekGrid";
 import { fmtRange, SCHEDULE_DAY_START, SCHEDULE_DAY_END } from "@/lib/hours";
 import { DAYS } from "@/lib/validate";
 import type { TimeRange } from "@/lib/studentAvailability";
+import { buildSubjectColorMap } from "@/lib/subjectColors";
 
 const STUDENT_COLORS = [
   "#dc2626", "#ea580c", "#c026d3", "#db2777",
   "#7c3aed", "#2563eb", "#0891b2", "#059669",
   "#ca8a04", "#e11d48", "#4f46e5", "#0d9488",
-];
-
-const EVENT_COLORS = [
-  "#2563eb", "#1d4ed8", "#0891b2", "#4f46e5",
-  "#0284c7", "#7c3aed", "#0e7490", "#4338ca",
 ];
 
 type ViewMode = "blocks" | "events";
@@ -36,6 +32,7 @@ interface Student {
 interface Subject {
   id: number;
   name: string;
+  color?: string | null;
 }
 
 interface Assignment {
@@ -279,13 +276,7 @@ export default function StudentsCalendarDialog({
     return m;
   }, [filteredStudents]);
 
-  const subjectColor = useMemo(() => {
-    const m: Record<number, string> = {};
-    subjects.forEach((s, i) => {
-      m[s.id] = EVENT_COLORS[i % EVENT_COLORS.length];
-    });
-    return m;
-  }, [subjects]);
+  const subjectColor = useMemo(() => buildSubjectColorMap(subjects), [subjects]);
 
   const filteredStudentIds = useMemo(
     () => new Set(filteredStudents.map((s) => s.id)),

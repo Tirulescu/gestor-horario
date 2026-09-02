@@ -31,16 +31,12 @@ import { AddGradeDialog } from "./AddGradeDialog";
 
 export default function SubjectDetailClient({ id }: { id: number }) {
   const toast = useToast();
-  const [subject, setSubject] = useState<Subject | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [members, setMembers] = useState<SubjectStudent[]>([]);
-  const [allStudents, setAllStudents] = useState<Student[]>([]);
-  const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([]);
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [autoResult, setAutoResult] = useState<AutoScheduleResult | null>(null);
+  const [autoResultMode, setAutoResultMode] = useState<"preview" | "applied">("preview");
 
   // member modal
   const [memberOpen, setMemberOpen] = useState(false);
@@ -56,8 +52,6 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [gradeDurationMin, setGradeDurationMin] = useState("30");
   const [gradeSlotsRequired, setGradeSlotsRequired] = useState("1");
   const [gradeSessionParts, setGradeSessionParts] = useState<SessionPartsValue>({ split: false, sessionParts: "2" });
-  const [gradeDurations, setGradeDurations] = useState<GradeDuration[]>([]);
-  const [teacherScheduleFixed, setTeacherScheduleFixed] = useState(false);
 
   // edit member modal
   const [editMember, setEditMember] = useState<SubjectStudent | null>(null);
@@ -67,23 +61,61 @@ export default function SubjectDetailClient({ id }: { id: number }) {
 
   const gradeKey = `/api/subject_grade_durations?subjectId=${id}`;
 
-  function hydrateFromCache(): boolean {
+  function readSubjectDetailCache() {
     const allSubjects = warmData<Subject[]>("/api/subjects");
     const ssAll = warmData<SubjectStudent[]>("/api/subject_students");
     const st = warmData<Student[]>("/api/students");
     const srAll = warmData<SlotRequest[]>("/api/slot_requests");
-    if (!allSubjects || !ssAll || !st || !srAll) return false;
+    if (!allSubjects || !ssAll || !st || !srAll) return null;
     const s = allSubjects.find((x) => x.id === id) ?? null;
-    if (!s) return false;
-    setSubject(s);
-    setMembers(ssAll.filter((x) => x.subjectId === id));
-    setAllStudents(st);
-    setSlotRequests(srAll.filter((x) => x.subjectId === id));
-    setGradeDurations(warmData<GradeDuration[]>(gradeKey) ?? []);
+    if (!s) return null;
     const teachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
-    if (teachers) setTeacherScheduleFixed(Boolean(teachers[0]?.scheduleFixed));
+    return {
+      subject: s,
+      members: ssAll.filter((x) => x.subjectId === id),
+      allStudents: st,
+      slotRequests: srAll.filter((x) => x.subjectId === id),
+      gradeDurations: warmData<GradeDuration[]>(gradeKey) ?? [],
+      teacherScheduleFixed: Boolean(teachers?.[0]?.scheduleFixed),
+    };
+  }
+
+  function getSubjectDetailBoot() {
+    const empty = {
+      pending: true,
+      subject: null as Subject | null,
+      members: [] as SubjectStudent[],
+      allStudents: [] as Student[],
+      slotRequests: [] as SlotRequest[],
+      gradeDurations: [] as GradeDuration[],
+      teacherScheduleFixed: false,
+    };
+    if (typeof window === "undefined") return empty;
+    const cached = readSubjectDetailCache();
+    if (!cached) return empty;
+    return { pending: false, ...cached };
+  }
+
+  function hydrateFromCache(): boolean {
+    const cached = readSubjectDetailCache();
+    if (!cached) return false;
+    setSubject(cached.subject);
+    setMembers(cached.members);
+    setAllStudents(cached.allStudents);
+    setSlotRequests(cached.slotRequests);
+    setGradeDurations(cached.gradeDurations);
+    setTeacherScheduleFixed(cached.teacherScheduleFixed);
     return true;
   }
+
+  const [boot] = useState(getSubjectDetailBoot);
+  const [subject, setSubject] = useState(boot.subject);
+  const [loading, setLoading] = useState(() => boot.pending);
+  const [members, setMembers] = useState(boot.members);
+  const [allStudents, setAllStudents] = useState(boot.allStudents);
+  const [slotRequests, setSlotRequests] = useState(boot.slotRequests);
+  const [gradeDurations, setGradeDurations] = useState(boot.gradeDurations);
+  const [teacherScheduleFixed, setTeacherScheduleFixed] = useState(boot.teacherScheduleFixed);
 
   async function load() {
     if (hydrateFromCache()) {
@@ -400,19 +432,36 @@ export default function SubjectDetailClient({ id }: { id: number }) {
 
   const confirmMessage = confirmTarget ? confirmTarget.label : "";
 
-  async function autoScheduleSubject() {
+  async function runAutoSchedule(apply = false) {
     setBusy(true);
-    setAutoResult(null);
     const res = await fetch("/api/auto_schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subjectIds: [id] }),
+      body: JSON.stringify({
+        subjectIds: [id],
+        ...(!apply ? { simulate: true } : {}),
+      }),
     });
     setBusy(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo auto-agendar");
     const data: AutoScheduleResult = await res.json();
     setAutoResult(data);
-    toast("success", `${data.assigned.length} colocados, ${data.unassigned.length} sin colocar`);
+    if (!apply) {
+      setAutoResultMode("preview");
+      return;
+    }
+    setAutoResultMode("applied");
+    toast("success", `Horario actualizado: ${data.assigned.length} colocados, ${data.unassigned.length} sin colocar`);
+    invalidateMany(["/api/assignments", "/api/subject_students"]);
+    await load();
+  }
+
+  async function autoScheduleSubject() {
+    await runAutoSchedule(false);
+  }
+
+  async function applyPreviewedSchedule() {
+    await runAutoSchedule(true);
   }
 
   async function toggleScheduleFixed(fixed: boolean) {
@@ -447,7 +496,13 @@ export default function SubjectDetailClient({ id }: { id: number }) {
 
   return (
     <div className="page-stack">
-      <AutoScheduleResultDialog result={autoResult} onClose={() => setAutoResult(null)} />
+      <AutoScheduleResultDialog
+        result={autoResult}
+        onClose={() => setAutoResult(null)}
+        mode={autoResultMode}
+        onApply={autoResultMode === "preview" ? applyPreviewedSchedule : undefined}
+        applying={busy}
+      />
       <div className="space-y-3">
         <Button asChild variant="outline">
           <Link href="/subjects"><ArrowLeft size={16} /> Asignaturas</Link>

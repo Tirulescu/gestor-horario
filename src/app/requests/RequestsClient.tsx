@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Plus, Save, Inbox, X, BookOpen, ChevronRight,
@@ -22,8 +22,11 @@ import { Card } from "@/components/ui/card";
 import { AnimatePresence, Reorder } from "motion/react";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
+import EmptyState from "@/components/EmptyState";
 import { ChipGroupSkeleton, MemberCardSkeleton } from "@/components/skeletons";
 import { warmData, put, invalidate, hasFresh, hasFreshAll } from "@/lib/clientCache";
+import { subjectsBootPending } from "@/lib/pageBoot";
+import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { DAYS } from "@/lib/validate";
 import { fmtRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, fmtDurationMin, resolveMemberDurationMin, fmtSubjectDurationOptions, slotDurationMin } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
@@ -47,22 +50,51 @@ function hydrateSubjectData(subjectId: number) {
   };
 }
 
+function getRequestsBoot() {
+  const empty = {
+    subjects: [] as Subject[],
+    activeSubjectId: null as number | null,
+    members: [] as SubjectStudent[],
+    slotRequests: [] as SlotRequest[],
+    allStudents: [] as Student[],
+    availabilities: [] as Availability[],
+    scheduleLocked: false,
+    subjectDataReady: false,
+  };
+  if (typeof window === "undefined") return empty;
+  const subs = warmData<Subject[]>("/api/subjects") ?? [];
+  const teachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+  const activeSubjectId = subs.length > 0 ? subs[0].id : null;
+  const hydrated = activeSubjectId !== null ? hydrateSubjectData(activeSubjectId) : null;
+  return {
+    subjects: subs,
+    activeSubjectId,
+    members: hydrated?.members ?? [],
+    slotRequests: hydrated?.slotRequests ?? [],
+    allStudents: hydrated?.allStudents ?? [],
+    availabilities: hydrated?.availabilities ?? [],
+    scheduleLocked: Boolean(teachers?.[0]?.scheduleFixed),
+    subjectDataReady: hydrated !== null,
+  };
+}
+
 export default function RequestsClient() {
   const toast = useToast();
+  const [boot] = useState(getRequestsBoot);
 
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [activeSubjectId, setActiveSubjectId] = useState<number | null>(null);
-  const [members, setMembers] = useState<SubjectStudent[]>([]);
-  const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([]);
-  const [availabilities, setAvailabilities] = useState<Availability[]>([]);
-  const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const [subjects, setSubjects] = useState(boot.subjects);
+  const [activeSubjectId, setActiveSubjectId] = useState<number | null>(boot.activeSubjectId);
+  const [members, setMembers] = useState(boot.members);
+  const [slotRequests, setSlotRequests] = useState(boot.slotRequests);
+  const [availabilities, setAvailabilities] = useState(boot.availabilities);
+  const [allStudents, setAllStudents] = useState(boot.allStudents);
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [loadingSubject, setLoadingSubject] = useState(false);
-  const [loadingSubjects, setLoadingSubjects] = useState(true);
-  const [scheduleLocked, setScheduleLocked] = useState(false);
+  const [loadingSubject, setLoadingSubject] = useState(() => !boot.subjectDataReady && boot.activeSubjectId !== null);
+  const [loadingSubjects, setLoadingSubjects] = useState(subjectsBootPending);
+  const [scheduleLocked, setScheduleLocked] = useState(boot.scheduleLocked);
 
   // Add-solicitud dialog state
   const [addOpen, setAddOpen] = useState(false);
@@ -142,9 +174,9 @@ export default function RequestsClient() {
     const cached = warmData<Subject[]>("/api/subjects");
     const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
     if (cachedTeachers) setScheduleLocked(Boolean(cachedTeachers[0]?.scheduleFixed));
-    if (cached !== null && cached.length > 0) {
+    if (cached !== null) {
       setSubjects(cached);
-      if (activeSubjectId === null) setActiveSubjectId(cached[0].id);
+      if (activeSubjectId === null && cached.length > 0) setActiveSubjectId(cached[0].id);
       setLoadingSubjects(false);
     } else {
       setLoadingSubjects(true);
@@ -219,9 +251,25 @@ export default function RequestsClient() {
     }
   }
 
+  useLayoutEffect(() => {
+    const cached = warmData<Subject[]>("/api/subjects");
+    if (cached !== null) {
+      setSubjects(cached);
+      setLoadingSubjects(false);
+    }
+    const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+    if (cachedTeachers) setScheduleLocked(Boolean(cachedTeachers[0]?.scheduleFixed));
+  }, []);
+
   useEffect(() => {
     void loadSubjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onLock = () => { void loadSubjects({ force: true }); };
+    window.addEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
+    return () => window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
   }, []);
 
   const requestsByStudent = useMemo(() => {
@@ -519,8 +567,8 @@ export default function RequestsClient() {
         title="Solicitudes de horario"
         description={
           activeSubject
-            ? `Preferencias en ${activeSubject.name}.`
-            : "Elige una asignatura."
+            ? `Preferencias de horario en ${activeSubject.name}.`
+            : "Preferencias de horario y prioridades por asignatura."
         }
         actions={
           loadingSubjects ? undefined : subjects.length === 0 ? (
@@ -545,31 +593,39 @@ export default function RequestsClient() {
 
       <Card className="p-4 space-y-3">
         <div>
-          <Label htmlFor="req-subject">Asignatura</Label>
+          <Label id="req-subject-label">Asignatura</Label>
           {loadingSubjects ? (
             <div className="mt-2">
               <ChipGroupSkeleton />
             </div>
           ) : subjects.length === 0 ? (
-            <p className="text-sm text-gray-500 mt-2">Crea una asignatura.</p>
+            <EmptyState
+              icon={BookOpen}
+              title="Sin asignaturas"
+              description="Crea una asignatura antes de gestionar solicitudes."
+              actionLabel="Crear asignatura"
+              actionHref="/subjects"
+            />
           ) : (
-            <Select
-              value={activeSubjectId != null ? String(activeSubjectId) : ""}
-              onValueChange={(v) => setActiveSubjectId(Number(v))}
+            <div
+              className="subject-chips-scroll mt-2"
+              role="tablist"
+              aria-labelledby="req-subject-label"
             >
-              <SelectTrigger id="req-subject" className="mt-1">
-                <SelectValue placeholder="Selecciona una asignatura…" />
-              </SelectTrigger>
-              <SelectContent>
-                {subjects.map((s) => (
-                  <SelectItem key={s.id} value={String(s.id)}>
-                    {s.name}
-                    {s.isCollective ? " · Colectiva" : ""}
-                    {` · ${fmtSubjectDurationOptions(s, s.subjectStudents, s.subjectGradeDurations)}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              {subjects.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeSubjectId === s.id}
+                  className={`chip shrink-0 ${activeSubjectId === s.id ? "chip-active" : ""}`}
+                  onClick={() => setActiveSubjectId(s.id)}
+                >
+                  {s.name}
+                  {s.isCollective ? " · Colectiva" : ""}
+                </button>
+              ))}
+            </div>
           )}
         </div>
         {activeSubject && (
@@ -638,16 +694,13 @@ export default function RequestsClient() {
       )}
 
       {activeSubject && !loadingSubject && sortedMembers.length === 0 && (
-        <Card className="p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <p className="text-sm text-gray-500">Sin alumnos inscritos en esta asignatura.</p>
-          {!scheduleLocked && (
-            <Button asChild>
-              <Link href={`/subjects/${activeSubject.id}`}>
-                <Plus size={16} /> Añadir alumnos
-              </Link>
-            </Button>
-          )}
-        </Card>
+        <EmptyState
+          icon={Inbox}
+          title="Sin alumnos inscritos"
+          description={`Añade alumnos a ${activeSubject.name} para gestionar sus solicitudes.`}
+          actionLabel={scheduleLocked ? undefined : "Añadir alumnos"}
+          actionHref={scheduleLocked ? undefined : `/subjects/${activeSubject.id}`}
+        />
       )}
 
       {/* Dialog añadir solicitud */}

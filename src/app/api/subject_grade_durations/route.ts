@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
 import { durationMinError, sessionPartsFitDuration, SESSION_PART_MIN } from "@/lib/hours";
 import {
@@ -109,13 +109,15 @@ export async function POST(req: NextRequest) {
   let enrolled = 0;
   let skipped = 0;
   if (enroll) {
-    const allowedIds = new Set(await getStudentIdsForTeacher(auth.teacher.id));
+    const allowedIds = await getStudentIdsForTeacher(auth.teacher.id);
+    if (allowedIds.length === 0) {
+      return Response.json({ rule, enrolled: 0, skipped: 0 }, { status: existing ? 200 : 201 });
+    }
     const students = await db.query.students.findMany({
+      where: inArray(schema.students.id, allowedIds),
       columns: { id: true, grade: true },
     });
-    const targets = students.filter(
-      (s) => allowedIds.has(s.id) && (s.grade ?? "").trim() === grade,
-    );
+    const targets = students.filter((s) => (s.grade ?? "").trim() === grade);
 
     for (const st of targets) {
       const result = await enrollStudentInSubject(subjectId, st.id, durationMin, slotsRequired, sessionParts);

@@ -14,10 +14,9 @@ import {
   unavailableOutsideAvailable,
   type TimeRange,
 } from "@/lib/studentAvailability";
+import { buildSubjectColorMap } from "@/lib/subjectColors";
 
-const COLORS = ["#2563eb", "#1d4ed8", "#0891b2", "#4f46e5", "#0284c7", "#7c3aed", "#0e7490", "#4338ca"];
-
-interface Subject { id: number; name: string; }
+interface Subject { id: number; name: string; color?: string | null; }
 interface Assignment {
   id: number; subjectId: number; dayOfWeek: number; startHour: number; endHour: number;
   origin: string; subject?: { id: number; name: string };
@@ -60,12 +59,7 @@ export default function StudentScheduleViewDialog({
     return () => { alive = false; };
   }, [open, student?.id]);
 
-  const subjectColor = useMemo(() => {
-    const m: Record<number, string> = {};
-    let ci = 0;
-    for (const s of subjects) m[s.id] = COLORS[ci++ % COLORS.length];
-    return m;
-  }, [subjects]);
+  const subjectColor = useMemo(() => buildSubjectColorMap(subjects), [subjects]);
 
   const ranges = student?.availableRanges ?? [];
   const blocked = student?.blockedRanges ?? [];

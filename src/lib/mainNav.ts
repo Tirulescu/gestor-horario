@@ -12,7 +12,7 @@ export function getMainNavItems(): NavItem[] {
   return [
     {
       href: "/dashboard",
-      label: "Horario",
+      label: "Inicio",
       icon: CalendarDays,
       isActive: (pathname) => pathname.startsWith("/dashboard"),
     },

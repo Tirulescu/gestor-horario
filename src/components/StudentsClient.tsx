@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Save, X, GraduationCap, Calendar, CalendarClock, CalendarDays, Mail } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { Plus, Pencil, Trash2, Save, X, GraduationCap, Calendar, CalendarClock, CalendarDays, Mail, Search } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
@@ -15,8 +15,11 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
+import EmptyState from "@/components/EmptyState";
+import FloatingActionButton from "@/components/FloatingActionButton";
 import { TableCardSkeleton } from "@/components/skeletons";
 import { warmData, put, invalidate, invalidateMany, hasFreshAll, STUDENTS_ENDPOINTS } from "@/lib/clientCache";
+import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { fmtDayRange } from "@/lib/hours";
 import StudentScheduleViewDialog from "@/components/StudentScheduleViewDialog";
 import StudentScheduleManageDialog from "@/components/StudentScheduleManageDialog";
@@ -47,14 +50,40 @@ interface Assignment {
   student?: { id: number; name: string } | null;
 }
 
+function getInitialStudentsState() {
+  const empty = {
+    students: null as Student[] | null,
+    subjects: [] as Subject[],
+    subjectLinks: [] as SSRow[],
+    availabilities: [] as Availability[],
+    teacherBlocks: [] as TeacherBlock[],
+    assignments: [] as Assignment[],
+    scheduleLocked: false,
+  };
+  if (typeof window === "undefined") return empty;
+  const cachedStudents = warmData<Student[]>("/api/students");
+  if (cachedStudents === null) return empty;
+  const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+  return {
+    students: cachedStudents,
+    subjects: warmData<Subject[]>("/api/subjects") ?? [],
+    subjectLinks: warmData<SSRow[]>("/api/subject_students") ?? [],
+    availabilities: warmData<Availability[]>("/api/availabilities") ?? [],
+    teacherBlocks: warmData<TeacherBlock[]>("/api/teacher_blocks") ?? [],
+    assignments: warmData<Assignment[]>("/api/assignments") ?? [],
+    scheduleLocked: Boolean(cachedTeachers?.[0]?.scheduleFixed),
+  };
+}
+
 export default function StudentsClient() {
   const toast = useToast();
-  const [students, setStudents] = useState<Student[] | null>(null);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [subjectLinks, setSubjectLinks] = useState<SSRow[]>([]);
-  const [availabilities, setAvailabilities] = useState<Availability[]>([]);
-  const [teacherBlocks, setTeacherBlocks] = useState<TeacherBlock[]>([]);
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [initial] = useState(getInitialStudentsState);
+  const [students, setStudents] = useState(initial.students);
+  const [subjects, setSubjects] = useState(initial.subjects);
+  const [subjectLinks, setSubjectLinks] = useState(initial.subjectLinks);
+  const [availabilities, setAvailabilities] = useState(initial.availabilities);
+  const [teacherBlocks, setTeacherBlocks] = useState(initial.teacherBlocks);
+  const [assignments, setAssignments] = useState(initial.assignments);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Student | null>(null);
@@ -75,7 +104,9 @@ export default function StudentsClient() {
   const [confirmDel, setConfirmDel] = useState<Student | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [scheduleLocked, setScheduleLocked] = useState(false);
+  const [scheduleLocked, setScheduleLocked] = useState(initial.scheduleLocked);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   async function load(opts: { force?: boolean } = {}) {
     const cachedStudents = warmData<Student[]>("/api/students");
@@ -118,12 +149,44 @@ export default function StudentsClient() {
     put("/api/assignments", asg);
     put("/api/teachers", teachers);
   }
+
+  useLayoutEffect(() => {
+    if (students !== null) return;
+    const cachedStudents = warmData<Student[]>("/api/students");
+    if (cachedStudents === null) return;
+    setStudents(cachedStudents);
+    setSubjects(warmData<Subject[]>("/api/subjects") ?? []);
+    setSubjectLinks(warmData<SSRow[]>("/api/subject_students") ?? []);
+    setAvailabilities(warmData<Availability[]>("/api/availabilities") ?? []);
+    setTeacherBlocks(warmData<TeacherBlock[]>("/api/teacher_blocks") ?? []);
+    setAssignments(warmData<Assignment[]>("/api/assignments") ?? []);
+    const cachedTeachers = warmData<{ scheduleFixed?: boolean }[]>("/api/teachers");
+    if (cachedTeachers) setScheduleLocked(Boolean(cachedTeachers[0]?.scheduleFixed));
+  }, [students]);
+
   useEffect(() => { void load(); }, []);
+
+  useEffect(() => {
+    const onLock = () => { void load({ force: true }); };
+    window.addEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
+    return () => window.removeEventListener(SCHEDULE_LOCK_CHANGED_EVENT, onLock);
+  }, []);
 
   const grades = useMemo(
     () => Array.from(new Set((students ?? []).map((s) => (s.grade ?? "").trim()).filter(Boolean))).sort(),
     [students]
   );
+
+  const filteredStudents = useMemo(() => {
+    const list = students ?? [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((s) =>
+      s.name.toLowerCase().includes(q)
+      || (s.email ?? "").toLowerCase().includes(q)
+      || (s.grade ?? "").toLowerCase().includes(q),
+    );
+  }, [students, searchQuery]);
 
   function openNew() {
     setEditing(null);
@@ -512,9 +575,23 @@ export default function StudentsClient() {
       <PageHeader
         icon={GraduationCap}
         title="Alumnos"
-        description="Alumnos, horarios y bloqueos."
+        description="Datos, disponibilidad y bloqueos de alumnos."
         actions={
           <>
+            <Button
+              variant={searchOpen ? "default" : "outline"}
+              onClick={() => {
+                setSearchOpen((v) => {
+                  if (v) setSearchQuery("");
+                  return !v;
+                });
+              }}
+              aria-expanded={searchOpen}
+              aria-controls="students-search-input"
+            >
+              <Search size={16} />
+              <span className="hidden sm:inline">Buscar</span>
+            </Button>
             <Button
               variant="outline"
               onClick={() => {
@@ -534,23 +611,47 @@ export default function StudentsClient() {
                 <span className="hidden sm:inline">Gestionar horario</span>
               </Button>
             )}
-            {!scheduleLocked && (
-              <Button onClick={openNew}>
-                <Plus size={16} />
-                <span className="hidden sm:inline">Nuevo alumno</span>
-              </Button>
-            )}
           </>
         }
       />
 
+      {searchOpen && (
+        <div className="students-search-bar">
+          <div className="students-search-input-wrap">
+            <Input
+              id="students-search-input"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar por nombre, email o curso…"
+              autoFocus
+            />
+          </div>
+        </div>
+      )}
+
       {students === null ? (
         <TableCardSkeleton rows={5} />
       ) : students.length === 0 ? (
-        <div className="entity-card text-gray-400 text-sm">No hay alumnos aún</div>
+        <EmptyState
+          icon={GraduationCap}
+          title="No hay alumnos aún"
+          description="Añade tu primer alumno para gestionar disponibilidad y horarios."
+          {...(!scheduleLocked ? {
+            actionLabel: "Añadir primer alumno",
+            onAction: openNew,
+          } : {})}
+        />
+      ) : filteredStudents.length === 0 ? (
+        <EmptyState
+          icon={Search}
+          title="Sin resultados"
+          description={`Ningún alumno coincide con «${searchQuery.trim()}».`}
+          actionLabel="Limpiar búsqueda"
+          onAction={() => { setSearchQuery(""); setSearchOpen(false); }}
+        />
       ) : (
         <div className="entity-list entity-list-stacked">
-          {students.map((s) => (
+          {filteredStudents.map((s) => (
             <article key={s.id} className="entity-card">
               <div className="entity-card-header">
                 <div className="min-w-0 flex-1">
@@ -742,6 +843,10 @@ export default function StudentsClient() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {!scheduleLocked && (
+        <FloatingActionButton onClick={openNew} aria-label="Nuevo alumno" />
+      )}
     </div>
   );
 }

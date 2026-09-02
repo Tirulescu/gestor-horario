@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CalendarClock } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
+import ScheduleLockToggle from "@/components/ScheduleLockToggle";
 import { APP_NAME } from "@/lib/pwa";
 
 export default function AppShell({
@@ -36,7 +37,10 @@ export default function AppShell({
 
             <DesktopNav />
 
-            {authSlot}
+            <div className="app-header-tools flex items-center gap-2 shrink-0">
+              <ScheduleLockToggle />
+              {authSlot}
+            </div>
           </div>
         </div>
       </header>
