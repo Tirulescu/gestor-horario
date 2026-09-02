@@ -19,6 +19,7 @@ import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import { SubjectListSkeleton } from "@/components/skeletons";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
+import { MIN_DURATION_MIN, DURATION_STEP_MIN } from "@/lib/hours";
 
 interface Subject {
   id: number;
@@ -38,6 +39,7 @@ export default function SubjectsPage() {
   const [isCollective, setIsCollective] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<number | null>(null);
 
@@ -125,8 +127,10 @@ export default function SubjectsPage() {
   }
 
   async function confirmDelete() {
-    if (confirmId === null) return;
+    if (confirmId === null || deleting) return;
+    setDeleting(true);
     const res = await fetch(`/api/subjects?id=${confirmId}`, { method: "DELETE" });
+    setDeleting(false);
     setConfirmId(null);
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
@@ -231,7 +235,7 @@ export default function SubjectsPage() {
             </div>
             <div>
               <Label><Clock size={12} className="inline mr-1" /> Duración de la sesión (min)</Label>
-              <Input className="w-32" type="number" min={5} step={5} value={defaultDurationMin} onChange={(e) => setDefaultDurationMin(e.target.value)} required />
+              <Input className="w-32" type="number" min={MIN_DURATION_MIN} step={DURATION_STEP_MIN} value={defaultDurationMin} onChange={(e) => setDefaultDurationMin(e.target.value)} required />
               <p className="text-xs text-gray-500 mt-1">
                 {isCollective
                   ? "Ej. 90 = 1 h 30 min."
@@ -249,21 +253,29 @@ export default function SubjectsPage() {
             </div>
           </form>
           <DialogFooter>
-            <Button variant="outline" type="button" onClick={closeForm}><X size={14} /> Cancelar</Button>
-            <Button type="submit" form="subject-form" disabled={loading}><Save size={14} /> {editingId ? "Guardar" : "Crear"}</Button>
+            <Button variant="outline" type="button" onClick={closeForm} disabled={loading}><X size={14} /> Cancelar</Button>
+            <Button type="submit" form="subject-form" loading={loading}><Save size={14} /> {editingId ? "Guardar" : "Crear"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={confirmId !== null} onOpenChange={(o) => { if (!o) setConfirmId(null); }}>
+      <AlertDialog open={confirmId !== null} onOpenChange={(o) => { if (!o && !deleting) setConfirmId(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar borrado</AlertDialogTitle>
             <AlertDialogDescription>¿Borrar esta asignatura y sus datos?</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>Borrar</AlertDialogAction>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              loading={deleting}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              Borrar
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

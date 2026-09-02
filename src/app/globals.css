@@ -40,7 +40,7 @@ body {
   min-height: 100svh;
 }
 
-button, a, [role="button"], .btn, .dock-item, .chip, .tab-item {
+button, a, [role="button"], .dock-item, .chip {
   touch-action: manipulation;
 }
 
@@ -181,97 +181,12 @@ button, a, [role="button"], .btn, .dock-item, .chip, .tab-item {
     border-radius: 1.25rem 1.25rem 0 0;
     padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
   }
-  dialog.modal-dialog {
-    top: auto;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    margin: 0;
-    width: 100%;
-    max-width: none !important;
-    border-radius: 1.25rem 1.25rem 0 0;
-    max-height: min(92dvh, 100%);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    animation: sheetUp 0.28s ease-out;
-  }
 }
 
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
-}
-
-/* ---------- Buttons ---------- */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  min-height: 44px;
-  padding: 0.5rem 0.9rem;
-  border-radius: 0.6rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.05s ease;
-  white-space: nowrap;
-}
-.btn:active { transform: translateY(1px); }
-.btn:disabled { opacity: 0.55; cursor: not-allowed; }
-.btn svg { width: 1rem; height: 1rem; flex-shrink: 0; }
-
-.btn-primary { background: var(--accent); color: white; }
-.btn-primary:hover { background: #1d4ed8; }
-
-.btn-ghost { background: white; border-color: #e5e7eb; color: #374151; }
-.btn-ghost:hover { background: #f3f4f6; }
-
-.btn-danger { background: white; border-color: #fecaca; color: #b91c1c; }
-.btn-danger:hover { background: #fee2e2; }
-
-.btn-danger-solid { background: var(--danger); color: white; border-color: var(--danger); }
-.btn-danger-solid:hover { background: #b91c1c; }
-
-.btn-sm { min-height: 36px; padding: 0.3rem 0.6rem; font-size: 0.8rem; }
-.btn-icon { padding: 0.5rem; min-height: 40px; min-width: 40px; }
-
-/* ---------- Hub tabs del profesor (grid 3×2 en móvil) ---------- */
-.hub-tabs {
-  display: flex;
-  gap: 0.25rem;
-  overflow-x: auto;
-  border-bottom: 1px solid #e5e7eb;
-}
-.hub-tabs [role="tab"] {
-  flex: 0 0 auto;
-}
-@media (max-width: 767px) {
-  .hub-tabs {
-    gap: 0.35rem;
-    padding-bottom: 0.45rem;
-    scrollbar-width: none;
-  }
-  .hub-tabs::-webkit-scrollbar { display: none; }
-  .hub-tabs [role="tab"] {
-    flex: 0 0 auto;
-    flex-direction: row;
-    gap: 0.35rem;
-    padding: 0.5rem 0.9rem;
-    border: 1px solid #e5e7eb;
-    border-radius: 999px;
-    background: #fff;
-    white-space: nowrap;
-    font-size: 0.8rem;
-  }
-  .hub-tabs [role="tab"] svg { width: 1rem; height: 1rem; }
-  .hub-tabs [role="tab"][data-state="active"] {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-  }
-  .hub-tabs [role="tab"][data-state="active"] svg { color: #fff; }
 }
 
 /* ---------- Bottom-sheet dialogs (móvil) ---------- */
@@ -287,78 +202,6 @@ button, a, [role="button"], .btn, .dock-item, .chip, .tab-item {
   border-radius: 0.9rem;
   padding: 1.25rem;
   box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
-}
-.card-hover { transition: box-shadow 0.15s ease, border-color 0.15s ease; }
-.card-hover:hover { box-shadow: 0 4px 12px 0 rgb(0 0 0 / 0.08); border-color: #dbeafe; }
-
-.input, .select, textarea.input {
-  width: 100%;
-  border: 1px solid #d1d5db;
-  border-radius: 0.5rem;
-  padding: 0.55rem 0.7rem;
-  font-size: 0.875rem;
-  background: white;
-  min-height: 44px;
-}
-.input:focus, .select:focus, textarea.input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
-}
-.label {
-  display: block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #374151;
-  margin-bottom: 0.35rem;
-  letter-spacing: 0.01em;
-}
-/* ---------- Badges / pills ---------- */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  background: #eff6ff;
-  color: var(--accent);
-  border: 1px solid #dbeafe;
-}
-.badge-success { background: #f0fdf4; color: var(--success); border-color: #bbf7d0; }
-.badge-warn { background: #fffbeb; color: #b45309; border-color: #fde68a; }
-.badge-danger { background: #fef2f2; color: var(--danger); border-color: #fecaca; }
-.badge-gray { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
-
-/* ---------- Native dialog (modal) ---------- */
-dialog.modal-dialog {
-  border: none;
-  border-radius: 1rem;
-  padding: 0;
-  background: white;
-  box-shadow: 0 20px 50px 0 rgb(0 0 0 / 0.25);
-  max-width: 32rem;
-  width: min(92vw, 480px);
-  color: #111827;
-  margin: auto;
-  top: 0; bottom: 0; left: 0; right: 0;
-  position: fixed;
-  max-height: 85dvh;
-  overflow: auto;
-}
-dialog.modal-dialog > .modal-dialog-inner { max-height: 85dvh; overflow: auto; }
-dialog.modal-dialog::backdrop {
-  background: rgb(15 23 42 / 0.5);
-  backdrop-filter: blur(3px);
-}
-dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
-@keyframes dialogIn {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-@media (min-width: 768px) {
-  dialog.modal-dialog { width: min(92vw, 480px); }
 }
 
 /* ---------- Toast ---------- */
@@ -533,9 +376,6 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
 
 /* ---------- Responsive table → cards ---------- */
 @media (max-width: 767px) {
-  .btn { min-height: 44px; font-size: 0.9rem; padding: 0.55rem 1rem; }
-  .btn-sm { min-height: 44px; font-size: 0.85rem; }
-  .btn-icon { min-height: 44px; min-width: 44px; padding: 0.55rem; }
   .rtable { display: block; }
   .rtable thead, .rtable tbody, .rtable tr, .rtable td { display: block; width: 100%; }
   .rtable thead { display: none; }
@@ -565,25 +405,6 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
   .rtable td[data-actions]::before { display: none; }
   .rtable td[data-actions] { justify-content: flex-end; padding-top: 0.5rem; border-top: 1px solid #f3f4f6; }
 }
-
-/* ---------- Week grid ---------- */
-.weekgrid-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-.weekgrid { min-width: 640px; width: 100%; border-collapse: collapse; }
-.weekgrid th, .weekgrid td { border: 1px solid #e5e7eb; }
-.weekgrid th { background: #f8fafc; font-weight: 600; font-size: 0.78rem; color: #6b7280; padding: 0.5rem; text-align: left; }
-.weekgrid td { padding: 0.2rem; vertical-align: top; }
-.weekgrid-cell { min-height: 44px; }
-.cal-block {
-  border-radius: 0.4rem;
-  padding: 0.25rem 0.4rem;
-  font-size: 0.72rem;
-  color: white;
-  margin-bottom: 0.2rem;
-  cursor: pointer;
-  transition: filter 0.15s ease;
-  line-height: 1.15;
-}
-.cal-block:hover { filter: brightness(1.08); }
 
 /* ---------- Misc ---------- */
 .section-title { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; }
@@ -775,13 +596,6 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
     border: 1px solid #e5e7eb;
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6);
   }
-  .desktop-nav-separator {
-    width: 1px;
-    height: 1.25rem;
-    background: #d1d5db;
-    margin: 0 0.15rem;
-    flex-shrink: 0;
-  }
   .desktop-nav-item {
     display: inline-flex;
     align-items: center;
@@ -827,41 +641,7 @@ dialog.modal-dialog[open] { animation: dialogIn 0.15s ease-out; }
   transition: opacity 0.15s ease;
 }
 .app-logo:hover { opacity: 0.85; }
-.muted { color: #6b7280; }
 .divider { height: 1px; background: #f3f4f6; margin: 0.75rem 0; }
-
-/* ---------- Tabs (hub del profesor) ---------- */
-.tabs-bar {
-  display: flex;
-  gap: 0.25rem;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  border-bottom: 1px solid #e5e7eb;
-  padding-bottom: 0;
-}
-.tabs-bar::-webkit-scrollbar { display: none; }
-.tab-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  white-space: nowrap;
-  padding: 0.6rem 0.9rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: #6b7280;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  min-height: 44px;
-  transition: color 0.15s ease, border-color 0.15s ease;
-}
-.tab-item:hover { color: #111827; }
-.tab-active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
 
 /* ---------- Chips (selector de grupo) ---------- */
 .chip {
@@ -1415,20 +1195,14 @@ html, body { overflow-x: hidden; }
   img, svg, video { max-width: 100%; height: auto; }
   .auth-menu svg,
   .auth-menu-dropdown svg,
-  .desktop-nav svg,
-  .bottom-nav svg {
+  .desktop-nav svg {
     max-width: none;
     height: unset;
   }
   .page-header,
   .page-description,
   .card,
-  .rtable,
-  .hub-tabs,
-  .tabs-bar {
-    max-width: 100%;
-  }
-  .weekgrid-wrap {
+  .rtable {
     max-width: 100%;
   }
   /* El calendario necesita ancho interno > viewport para scroll horizontal */
@@ -1635,7 +1409,7 @@ html, body { overflow-x: hidden; }
 .spinner {
   width: 1rem;
   height: 1rem;
-  border: 2px solid var(--ring);
+  border: 2px solid currentColor;
   border-top-color: transparent;
   border-radius: 9999px;
   animation: spin 0.7s linear infinite;

@@ -2,7 +2,11 @@ import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
 import { eq, inArray } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
-import { firstAvailabilityBlockedConflict, normalizeBlockedRanges, normalizeRanges } from "@/lib/studentAvailability";
+import {
+  carveAvailabilityAroundBlocked,
+  normalizeBlockedRanges,
+  normalizeRanges,
+} from "@/lib/studentAvailability";
 import {
   requireTeacher,
   assertOwnTeacher,
@@ -63,25 +67,34 @@ export async function PUT(req: NextRequest) {
     : undefined;
   const patch: Record<string, unknown> = { name, email };
   if (grade !== undefined) patch.grade = grade;
-  if (body.blockedRanges !== undefined) {
-    patch.blockedRanges = normalizeBlockedRanges(body.blockedRanges);
-  }
-  if (body.availableRanges !== undefined) {
-    const available = normalizeRanges(body.availableRanges);
-    const blocked =
-      body.blockedRanges !== undefined
-        ? normalizeBlockedRanges(body.blockedRanges)
-        : normalizeBlockedRanges(
-            (await db.query.students.findFirst({
-              where: eq(schema.students.id, id),
-              columns: { blockedRanges: true },
-            }))?.blockedRanges
-          );
-    if (firstAvailabilityBlockedConflict(available, blocked)) {
-      return apiError("La disponibilidad no puede incluir horas bloqueadas");
+
+  const current =
+    body.blockedRanges !== undefined || body.availableRanges !== undefined
+      ? await db.query.students.findFirst({
+          where: eq(schema.students.id, id),
+          columns: { blockedRanges: true, availableRanges: true },
+        })
+      : null;
+
+  const blocked =
+    body.blockedRanges !== undefined
+      ? normalizeBlockedRanges(body.blockedRanges)
+      : normalizeBlockedRanges(current?.blockedRanges);
+
+  let available =
+    body.availableRanges !== undefined
+      ? normalizeRanges(body.availableRanges)
+      : normalizeRanges(current?.availableRanges);
+
+  // Disponibilidad y bloqueos no pueden solapar: se recorta la disponibilidad.
+  if (body.blockedRanges !== undefined || body.availableRanges !== undefined) {
+    available = carveAvailabilityAroundBlocked(available, blocked);
+    if (body.blockedRanges !== undefined) patch.blockedRanges = blocked;
+    if (body.availableRanges !== undefined || body.blockedRanges !== undefined) {
+      patch.availableRanges = available;
     }
-    patch.availableRanges = available;
   }
+
   const [updated] = await db.update(schema.students).set(patch).where(eq(schema.students.id, id)).returning();
   if (!updated) return apiError("No encontrado", 404);
   return Response.json(updated);

@@ -52,10 +52,6 @@ export function snoozeInstallPrompt(): void {
   window.localStorage.setItem(PWA_INSTALL_STORAGE_KEY, String(Date.now()));
 }
 
-export function clearInstallPromptSnooze(): void {
-  window.localStorage.removeItem(PWA_INSTALL_STORAGE_KEY);
-}
-
 export function getDeferredInstallPrompt(): BeforeInstallPromptEvent | null {
   if (typeof window === "undefined") return null;
   return window.__pwaDeferredPrompt ?? null;

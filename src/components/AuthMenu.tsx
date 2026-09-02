@@ -199,10 +199,10 @@ export default function AuthMenu({
                 className="w-full"
                 role="menuitem"
                 onClick={signOut}
-                disabled={signingOut}
+                loading={signingOut}
               >
                 <LogOut size={14} className="auth-menu-action-icon" />
-                {signingOut ? "Cerrando…" : "Cerrar sesión"}
+                Cerrar sesión
               </Button>
             </div>
           </div>,

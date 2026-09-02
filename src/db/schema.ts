@@ -65,6 +65,8 @@ export const subjectStudents = pgTable(
     durationMin: integer("duration_min"),
     priority: integer("priority").notNull().default(1),
     slotsRequired: integer("slots_required").notNull().default(1),
+    /** Partes de 30 min que cubren la duración (1 = sesión única; N = N×30 = duración total). */
+    sessionParts: integer("session_parts").notNull().default(1),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [uniqueIndex("subject_students_subject_student_uniq").on(t.subjectId, t.studentId)]
@@ -79,6 +81,8 @@ export const subjectGradeDurations = pgTable(
     grade: text("grade").notNull(),
     durationMin: integer("duration_min").notNull(),
     slotsRequired: integer("slots_required").notNull().default(1),
+    /** Partes de 30 min que cubren la duración al inscribir (1 = sin dividir; N×30 = duración). */
+    sessionParts: integer("session_parts").notNull().default(1),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [uniqueIndex("subject_grade_durations_subject_grade_uniq").on(t.subjectId, t.grade)]

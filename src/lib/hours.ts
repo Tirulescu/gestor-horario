@@ -70,8 +70,89 @@ export function fmtSubjectDurationOptions(
   return opts.map((d) => `${d} min`).join(" · ");
 }
 
-export function slotMatchesDuration(startHour: number, endHour: number, durationMin: number): boolean {
-  return Math.abs(endHour - endHourFromDuration(startHour, durationMin)) < 1e-9;
+/** Duración en minutos de una franja (inicio–fin). */
+export function slotDurationMin(startHour: number, endHour: number): number {
+  return Math.round((endHour - startHour) * 60);
+}
+
+/** Paso mínimo de duración de asignatura (media hora). */
+export const DURATION_STEP_MIN = 30;
+/** Duración mínima de asignatura. */
+export const MIN_DURATION_MIN = 30;
+
+/** True si la duración es múltiplo de media hora (≥ 30 min). */
+export function isValidDurationMin(durationMin: number): boolean {
+  return (
+    Number.isInteger(durationMin) &&
+    durationMin >= MIN_DURATION_MIN &&
+    durationMin % DURATION_STEP_MIN === 0
+  );
+}
+
+export function durationMinError(durationMin: number): string | null {
+  if (!Number.isFinite(durationMin) || !Number.isInteger(durationMin)) {
+    return "La duración debe ser un número entero de minutos";
+  }
+  if (durationMin < MIN_DURATION_MIN) {
+    return `La duración mínima es ${MIN_DURATION_MIN} min`;
+  }
+  if (durationMin % DURATION_STEP_MIN !== 0) {
+    return `La duración debe ser múltiplo de ${DURATION_STEP_MIN} min (p. ej. 1 h, 1 h 30 min)`;
+  }
+  return null;
+}
+
+/**
+ * Partes válidas para cubrir `maxDurationMin` (p. ej. 60 → 30, 60).
+ * Pasos de 30 min; la duración exacta se incluye si es múltiplo del paso.
+ */
+export function durationPartOptions(maxDurationMin: number, stepMin = DURATION_STEP_MIN): number[] {
+  if (!(maxDurationMin >= 1)) return [];
+  const opts: number[] = [];
+  for (let d = stepMin; d <= maxDurationMin; d += stepMin) opts.push(d);
+  return opts;
+}
+
+/** La franja dura entre 1 min y el máximo de la asignatura (permite dividir la clase). */
+export function slotFitsMaxDuration(startHour: number, endHour: number, maxDurationMin: number): boolean {
+  const d = slotDurationMin(startHour, endHour);
+  return d >= 1 && d <= maxDurationMin;
+}
+
+/** Duración de cada media hora al dividir una asignatura. */
+export const SESSION_PART_MIN = DURATION_STEP_MIN;
+
+/** Máximo de partes de 30 min posibles para una duración total. */
+export function maxSessionParts(durationMin: number): number {
+  if (!isValidDurationMin(durationMin)) return 1;
+  return durationMin / SESSION_PART_MIN;
+}
+
+/**
+ * Opciones del selector (≥2) al dividir: solo valores que cubren toda la duración
+ * en medias horas (p. ej. 90 → [3], 120 → [4]).
+ */
+export function sessionPartsOptions(durationMin: number): number[] {
+  const max = maxSessionParts(durationMin);
+  if (max < 2) return [];
+  return [max];
+}
+
+/** True si `sessionParts` encaja con la duración (1 = sin dividir; N = N×30 = total). */
+export function sessionPartsFitDuration(durationMin: number, sessionParts: number): boolean {
+  const parts = Math.max(1, Math.floor(sessionParts) || 1);
+  if (parts <= 1) return true;
+  if (!isValidDurationMin(durationMin)) return false;
+  return parts * SESSION_PART_MIN === durationMin;
+}
+
+/** True si dos franjas del mismo día se tocan (contiguas). */
+export function slotsAreAdjacent(
+  a: { day: number; start: number; end: number },
+  b: { day: number; start: number; end: number },
+): boolean {
+  if (a.day !== b.day) return false;
+  return Math.abs(a.end - b.start) < 1e-9 || Math.abs(b.end - a.start) < 1e-9;
 }
 
 export function durationFitsInInterval(
@@ -96,6 +177,8 @@ export function* slotStartsForDuration(
 /** Rango visible del calendario semanal (horas enteras). */
 export const SCHEDULE_DAY_START = 7;
 export const SCHEDULE_DAY_END = 23;
+/** Fin inclusivo de selectores (medianoche). */
+export const SCHEDULE_SELECT_END = 24;
 
 /** Opciones de horas para selects: 00:00 .. 23:30 en pasos de 30 min. */
 export function hourOptions(from = 0, to = 24): { value: string; label: string }[] {
@@ -109,3 +192,10 @@ export function hourOptions(from = 0, to = 24): { value: string; label: string }
   }
   return out;
 }
+
+/** Inicios alineados al calendario (7:00–23:00). */
+export const SCHEDULE_HOURS_START = hourOptions(SCHEDULE_DAY_START, SCHEDULE_DAY_END);
+/** Fines alineados al calendario (7:30–24:00). */
+export const SCHEDULE_HOURS_END = hourOptions(SCHEDULE_DAY_START, SCHEDULE_SELECT_END).filter(
+  (o) => Number(o.value) > SCHEDULE_DAY_START,
+);

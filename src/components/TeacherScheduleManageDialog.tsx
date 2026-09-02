@@ -5,16 +5,13 @@ import { CalendarClock, CalendarPlus, Plus, Save, X } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DAYS } from "@/lib/validate";
-import { fmtDayRange, hourOptions } from "@/lib/hours";
+import { fmtDayRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END } from "@/lib/hours";
 import {
   getFreeHourSetsForDays,
   slotOverlapsBlocked,
@@ -23,10 +20,12 @@ import {
 
 type ActionType = "availability" | "block";
 
-type ConfirmRemove =
-  | { kind: "availability"; id: number; label: string }
-  | { kind: "block"; id: number; label: string }
-  | null;
+function toggleId(prev: Set<number>, id: number) {
+  const n = new Set(prev);
+  if (n.has(id)) n.delete(id);
+  else n.add(id);
+  return n;
+}
 
 interface Availability {
   id: number;
@@ -51,14 +50,18 @@ interface TeacherScheduleManageDialogProps {
   /** Clases ya asignadas: no pueden solapar con nuevos eventos. */
   assignments?: { dayOfWeek: number; startHour: number; endHour: number }[];
   saving?: boolean;
-  onSaveAvailability: (ranges: TimeRange[]) => Promise<void>;
-  onSaveBlock: (days: number[], start: number, end: number, title: string) => Promise<void>;
-  onRemoveAvailability: (id: number) => Promise<void>;
-  onRemoveBlock: (id: number) => Promise<void>;
+  onApplyAvailability: (args: {
+    removeIds: number[];
+    adds: TimeRange[];
+  }) => Promise<boolean>;
+  onApplyBlocks: (args: {
+    removeIds: number[];
+    create?: { days: number[]; start: number; end: number; title: string };
+  }) => Promise<boolean>;
 }
 
-const HOURS_START = hourOptions(8, 23);
-const HOURS_END = hourOptions(9, 24);
+const HOURS_START = SCHEDULE_HOURS_START;
+const HOURS_END = SCHEDULE_HOURS_END;
 
 function blocksToRanges(blocks: TeacherBlock[]): TimeRange[] {
   return blocks.map((b) => ({ day: b.dayOfWeek, start: b.startHour, end: b.endHour }));
@@ -71,21 +74,26 @@ export default function TeacherScheduleManageDialog({
   teacherBlocks,
   assignments = [],
   saving = false,
-  onSaveAvailability,
-  onSaveBlock,
-  onRemoveAvailability,
-  onRemoveBlock,
+  onApplyAvailability,
+  onApplyBlocks,
 }: TeacherScheduleManageDialogProps) {
   const [action, setAction] = useState<ActionType>("availability");
-  const [days, setDays] = useState<Set<number>>(new Set([1]));
-  const [start, setStart] = useState("16");
-  const [end, setEnd] = useState("18");
+  const [days, setDays] = useState<Set<number>>(new Set());
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
   const [blockTitle, setBlockTitle] = useState("");
   const [pendingAvail, setPendingAvail] = useState<TimeRange[]>([]);
+  const [pendingRemoveAvail, setPendingRemoveAvail] = useState<Set<number>>(new Set());
+  const [pendingRemoveBlocks, setPendingRemoveBlocks] = useState<Set<number>>(new Set());
   const [addErr, setAddErr] = useState("");
-  const [confirmRemove, setConfirmRemove] = useState<ConfirmRemove>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const busy = saving || submitting;
 
-  const blockedRanges = useMemo(() => blocksToRanges(teacherBlocks), [teacherBlocks]);
+  const activeBlocks = useMemo(
+    () => teacherBlocks.filter((b) => !pendingRemoveBlocks.has(b.id)),
+    [teacherBlocks, pendingRemoveBlocks],
+  );
+  const blockedRanges = useMemo(() => blocksToRanges(activeBlocks), [activeBlocks]);
   const occupiedRanges = useMemo(
     () => [
       ...blockedRanges,
@@ -97,7 +105,7 @@ export default function TeacherScheduleManageDialog({
   const hourSets = useMemo(() => {
     // Eventos: pueden estar fuera de la disponibilidad, pero no solapar eventos/clases.
     if (action === "block") {
-      return getFreeHourSetsForDays([...days], occupiedRanges, HOURS_START, HOURS_END, start);
+      return getFreeHourSetsForDays([...days], occupiedRanges, HOURS_START, HOURS_END, start || undefined);
     }
     // Disponibilidad: solo huecos libres (sin eventos/reservas del profesor).
     return getFreeHourSetsForDays(
@@ -105,42 +113,56 @@ export default function TeacherScheduleManageDialog({
       [...blockedRanges, ...pendingAvail],
       HOURS_START,
       HOURS_END,
-      start,
+      start || undefined,
     );
   }, [action, days, blockedRanges, occupiedRanges, pendingAvail, start]);
 
   useEffect(() => {
     if (!open) {
       setPendingAvail([]);
+      setPendingRemoveAvail(new Set());
+      setPendingRemoveBlocks(new Set());
       return;
     }
     setAction("availability");
-    setDays(new Set([1]));
-    setStart("16");
-    setEnd("18");
+    setDays(new Set());
+    setStart("");
+    setEnd("");
+    setBlockTitle("");
+    setPendingAvail([]);
+    setPendingRemoveAvail(new Set());
+    setPendingRemoveBlocks(new Set());
+    setAddErr("");
+  }, [open]);
+
+  useEffect(() => {
+    setPendingRemoveAvail(new Set());
+    setPendingRemoveBlocks(new Set());
+    setDays(new Set());
+    setStart("");
+    setEnd("");
     setBlockTitle("");
     setPendingAvail([]);
     setAddErr("");
-    setConfirmRemove(null);
-  }, [open]);
+  }, [action]);
 
   useEffect(() => {
     setAddErr("");
   }, [action, days, start, end, blockTitle]);
 
   useEffect(() => {
-    if (hourSets.startSet.size === 0) return;
-    if (!hourSets.startSet.has(start)) {
-      setStart(Array.from(hourSets.startSet)[0]);
+    if (start === "") return;
+    if (hourSets.startSet.size === 0 || !hourSets.startSet.has(start)) {
+      setStart("");
     }
   }, [hourSets.startSet, start, action, days, pendingAvail]);
 
   useEffect(() => {
-    if (hourSets.endSet.size === 0) return;
-    if (!hourSets.endSet.has(end)) {
-      setEnd(Array.from(hourSets.endSet)[0]);
+    if (end === "") return;
+    if (start === "" || hourSets.endSet.size === 0 || !hourSets.endSet.has(end) || !(Number(end) > Number(start))) {
+      setEnd("");
     }
-  }, [hourSets.endSet, end]);
+  }, [hourSets.endSet, end, start]);
 
   function toggleDay(day: number) {
     setDays((prev) => {
@@ -151,18 +173,32 @@ export default function TeacherScheduleManageDialog({
     });
   }
 
+  const blockFormComplete =
+    blockTitle.trim() !== "" &&
+    days.size > 0 &&
+    start !== "" &&
+    end !== "" &&
+    Number(end) > Number(start) &&
+    hourSets.startSet.size > 0 &&
+    hourSets.startSet.has(start) &&
+    hourSets.endSet.has(end);
+
+  const blockFormTouched =
+    blockTitle.trim() !== "" || days.size > 0 || start !== "" || end !== "";
+
+  const canSave =
+    (action === "availability" && (pendingAvail.length > 0 || pendingRemoveAvail.size > 0)) ||
+    (action === "block" && (pendingRemoveBlocks.size > 0 || blockFormComplete));
+
   function formErr(): string {
+    if (action === "availability") return "";
+    if (pendingRemoveBlocks.size > 0) return "";
+    if (!blockFormTouched) return "";
+    if (!blockTitle.trim()) return "El motivo es obligatorio";
     if (days.size === 0) return "Selecciona al menos un día";
-    if (start === "" || end === "") return "";
+    if (start === "" || end === "") return "Selecciona hora de inicio y fin";
     if (!(Number(end) > Number(start))) return "La hora de fin debe ser posterior a la de inicio";
-    if (action === "availability" && pendingAvail.length === 0) return "Añade al menos una franja de disponibilidad";
-    if (action === "availability" && hourSets.startSet.size === 0) {
-      return "No hay horas libres (sin eventos) para los días seleccionados";
-    }
-    if (action === "block" && hourSets.startSet.size === 0) {
-      return "No hay huecos libres: chocan con otros eventos";
-    }
-    if (action === "block" && !blockTitle.trim()) return "El motivo es obligatorio";
+    if (hourSets.startSet.size === 0) return "No hay huecos libres: chocan con otros eventos";
     return "";
   }
   const err = formErr();
@@ -184,9 +220,24 @@ export default function TeacherScheduleManageDialog({
   }
 
   function addPendingAvailForEachDay() {
+    if (days.size === 0) {
+      setAddErr("Selecciona al menos un día");
+      return;
+    }
+    if (start === "" || end === "") {
+      setAddErr("Selecciona hora de inicio y fin");
+      return;
+    }
     const s = Number(start);
     const e = Number(end);
-    if (!(e > s) || days.size === 0) return;
+    if (!(e > s)) {
+      setAddErr("La hora de fin debe ser posterior a la de inicio");
+      return;
+    }
+    if (hourSets.startSet.size === 0) {
+      setAddErr("No hay horas libres (sin eventos) para los días seleccionados");
+      return;
+    }
     const toAdd: TimeRange[] = [];
     for (const day of days) {
       const range = { day, start: s, end: e };
@@ -214,33 +265,47 @@ export default function TeacherScheduleManageDialog({
   }
 
   async function handleSubmit() {
-    if (err) return;
-    if (action === "availability") {
-      for (const r of pendingAvail) {
-        const conflict = blockedConflictMessage(r);
-        if (conflict) {
-          setAddErr(conflict);
-          return;
+    if (err || busy) return;
+    setSubmitting(true);
+    try {
+      if (action === "availability") {
+        for (const r of pendingAvail) {
+          const conflict = blockedConflictMessage(r);
+          if (conflict) {
+            setAddErr(conflict);
+            return;
+          }
         }
+        const ok = await onApplyAvailability({
+          removeIds: [...pendingRemoveAvail],
+          adds: pendingAvail,
+        });
+        if (!ok) return;
+        setPendingAvail([]);
+        setPendingRemoveAvail(new Set());
+        onOpenChange(false);
+      } else {
+        const ok = await onApplyBlocks({
+          removeIds: [...pendingRemoveBlocks],
+          create: blockFormComplete
+            ? {
+                days: [...days],
+                start: Number(start),
+                end: Number(end),
+                title: blockTitle.trim(),
+              }
+            : undefined,
+        });
+        if (!ok) return;
+        setPendingRemoveBlocks(new Set());
+        onOpenChange(false);
       }
-      await onSaveAvailability(pendingAvail);
-      setPendingAvail([]);
-      onOpenChange(false);
-    } else {
-      await onSaveBlock([...days], Number(start), Number(end), blockTitle.trim());
-      onOpenChange(false);
+    } finally {
+      setSubmitting(false);
     }
   }
 
-  async function handleConfirmRemove() {
-    if (!confirmRemove) return;
-    if (confirmRemove.kind === "availability") await onRemoveAvailability(confirmRemove.id);
-    else await onRemoveBlock(confirmRemove.id);
-    setConfirmRemove(null);
-  }
-
   return (
-    <>
     <Dialog open={open} onOpenChange={(o) => { if (!o) onOpenChange(false); }}>
       <DialogContent>
         <DialogHeader>
@@ -278,52 +343,63 @@ export default function TeacherScheduleManageDialog({
           )}
 
           {action === "availability" && availabilities.length > 0 && (
-            <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 p-3 space-y-1.5">
-              <p className="text-xs font-medium text-emerald-900">Disponibilidad actual</p>
-              <div className="flex flex-wrap gap-1.5">
-                {availabilities.map((a) => (
-                  <span key={a.id} className="inline-flex items-center gap-1 text-xs bg-white text-emerald-800 border border-emerald-200 rounded-full pl-2.5 pr-1 py-0.5">
-                    {fmtDayRange(a.dayOfWeek, a.startHour, a.endHour)}
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 space-y-2">
+              <p className="text-sm font-medium text-emerald-950">Disponibilidad actual</p>
+              <ul className="space-y-1.5 max-h-[28dvh] overflow-y-auto">
+                {availabilities.map((a) => {
+                  const marked = pendingRemoveAvail.has(a.id);
+                  return (
+                  <li
+                    key={a.id}
+                    className={`flex items-center gap-2 rounded-lg border border-emerald-200/80 bg-white px-3 py-2 ${marked ? "opacity-50" : ""}`}
+                  >
+                    <p className={`min-w-0 flex-1 text-sm font-medium text-emerald-950 truncate ${marked ? "line-through" : ""}`}>
+                      {fmtDayRange(a.dayOfWeek, a.startHour, a.endHour)}
+                    </p>
                     <button
                       type="button"
-                      onClick={() => setConfirmRemove({
-                        kind: "availability",
-                        id: a.id,
-                        label: `¿Quitar disponibilidad del ${fmtDayRange(a.dayOfWeek, a.startHour, a.endHour)}?`,
-                      })}
-                      className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-emerald-100"
-                      aria-label="Quitar franja"
+                      onClick={() => setPendingRemoveAvail((prev) => toggleId(prev, a.id))}
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-full text-red-600 hover:bg-red-50"
+                      aria-label={marked ? "Deshacer quitar" : "Quitar"}
                     >
-                      <X size={11} />
+                      <X size={14} />
                     </button>
-                  </span>
-                ))}
-              </div>
+                  </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
 
           {action === "block" && teacherBlocks.length > 0 && (
-            <div className="rounded-lg border border-red-100 bg-red-50/50 p-3 space-y-1.5">
-              <p className="text-xs font-medium text-red-900">Eventos actuales</p>
-              <div className="flex flex-wrap gap-1.5">
-                {teacherBlocks.map((b) => (
-                  <span key={b.id} className="inline-flex items-center gap-1 text-xs bg-white text-red-800 border border-red-200 rounded-full pl-2.5 pr-1 py-0.5">
-                    {b.title} · {fmtDayRange(b.dayOfWeek, b.startHour, b.endHour)}
+            <div className="rounded-lg border border-red-200 bg-red-50/60 p-3 space-y-2">
+              <p className="text-sm font-medium text-red-950">Eventos actuales</p>
+              <ul className="space-y-1.5 max-h-[28dvh] overflow-y-auto">
+                {teacherBlocks.map((b) => {
+                  const marked = pendingRemoveBlocks.has(b.id);
+                  return (
+                  <li
+                    key={b.id}
+                    className={`flex items-center gap-2 rounded-lg border border-red-200/80 bg-white px-3 py-2 ${marked ? "opacity-50" : ""}`}
+                  >
+                    <div className={`min-w-0 flex-1 ${marked ? "line-through" : ""}`}>
+                      <p className="text-sm font-medium text-red-950 truncate">{b.title}</p>
+                      <p className="text-xs text-red-800/70 truncate">
+                        {fmtDayRange(b.dayOfWeek, b.startHour, b.endHour)}
+                      </p>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setConfirmRemove({
-                        kind: "block",
-                        id: b.id,
-                        label: `¿Quitar el evento «${b.title}» del ${fmtDayRange(b.dayOfWeek, b.startHour, b.endHour)}?`,
-                      })}
-                      className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-red-100"
-                      aria-label="Quitar evento"
+                      onClick={() => setPendingRemoveBlocks((prev) => toggleId(prev, b.id))}
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-full text-red-600 hover:bg-red-50"
+                      aria-label={marked ? "Deshacer quitar" : "Quitar"}
                     >
-                      <X size={11} />
+                      <X size={14} />
                     </button>
-                  </span>
-                ))}
-              </div>
+                  </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
 
@@ -381,7 +457,7 @@ export default function TeacherScheduleManageDialog({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label>Desde</Label>
-                <Select value={start} onValueChange={setStart} disabled={hourSets.startSet.size === 0}>
+                <Select value={start || undefined} onValueChange={setStart} disabled={days.size === 0 || hourSets.startSet.size === 0}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
                     {HOURS_START.map((o) => hourItem(o, hourSets.startSet))}
@@ -390,7 +466,7 @@ export default function TeacherScheduleManageDialog({
               </div>
               <div>
                 <Label>Hasta</Label>
-                <Select value={end} onValueChange={setEnd} disabled={hourSets.endSet.size === 0}>
+                <Select value={end || undefined} onValueChange={setEnd} disabled={start === "" || hourSets.endSet.size === 0}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
                     {HOURS_END.map((o) => hourItem(o, hourSets.endSet))}
@@ -399,7 +475,7 @@ export default function TeacherScheduleManageDialog({
               </div>
             </div>
             {action === "availability" && (
-              <Button type="button" variant="outline" className="w-full" onClick={addPendingAvailForEachDay} disabled={hourSets.startSet.size === 0 || hourSets.endSet.size === 0}>
+              <Button type="button" variant="outline" className="w-full" onClick={addPendingAvailForEachDay}>
                 <Plus size={14} /> Añadir franja{days.size > 1 ? "s" : ""}
               </Button>
             )}
@@ -425,10 +501,14 @@ export default function TeacherScheduleManageDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}><X size={14} /> Cancelar</Button>
-          <Button onClick={handleSubmit} disabled={saving || !!err || (action === "availability" && !!addErr)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+            <X size={14} /> Cancelar
+          </Button>
+          <Button onClick={handleSubmit} loading={busy} disabled={!canSave || !!err || !!addErr}>
             {action === "availability" ? (
-              <><Save size={14} /> Guardar disponibilidad{pendingAvail.length > 0 ? ` (${pendingAvail.length})` : ""}</>
+              <><Save size={14} /> Guardar{(pendingAvail.length + pendingRemoveAvail.size) > 0 ? ` (${pendingAvail.length + pendingRemoveAvail.size})` : ""}</>
+            ) : pendingRemoveBlocks.size > 0 ? (
+              <><Save size={14} /> Guardar ({pendingRemoveBlocks.size})</>
             ) : (
               <><CalendarPlus size={14} /> Añadir evento</>
             )}
@@ -436,21 +516,5 @@ export default function TeacherScheduleManageDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-
-      <AlertDialog open={confirmRemove !== null} onOpenChange={(o) => { if (!o) setConfirmRemove(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {confirmRemove?.kind === "block" ? "Quitar evento" : "Quitar disponibilidad"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>{confirmRemove?.label}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmRemove}>Quitar</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
   );
 }

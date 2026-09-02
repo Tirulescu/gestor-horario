@@ -7,35 +7,21 @@ import {
   type CollectiveMember,
 } from "@/lib/collectiveSchedule";
 import { cloneFreeByDay, mergeFreeByDay, occupy, type Interval } from "@/lib/scheduleIntervals";
-import { placeIndividualSlot, unassignedReason } from "@/lib/schedulePlacement";
+import { placeIndividualSlot, placeSplitParts, unassignedReason } from "@/lib/schedulePlacement";
+import { SESSION_PART_MIN, maxSessionParts, sessionPartsFitDuration } from "@/lib/hours";
 import { db, schema, type Database } from "@/db";
 import { eq, and, inArray } from "drizzle-orm";
+import type {
+  AutoScheduleAssigned,
+  AutoScheduleResult,
+  AutoScheduleUnassigned,
+} from "@/lib/autoScheduleTypes";
 
-export interface AutoScheduleAssigned {
-  studentId: number;
-  studentName: string;
-  subjectId: number;
-  subjectName: string;
-  day: number;
-  startHour: number;
-  endHour: number;
-  /** opcion interna del alumno cumplida: 1 = su favorita, null = no peticion, 0 = fallback */
-  prefOrder: number | null;
-  isCollective?: boolean;
-  collectiveSessionId?: string | null;
-}
-export interface AutoScheduleUnassigned {
-  studentId: number;
-  studentName: string;
-  subjectId: number;
-  subjectName: string;
-  reason: string;
-}
-export interface AutoScheduleResult {
-  assigned: AutoScheduleAssigned[];
-  unassigned: AutoScheduleUnassigned[];
-  skipped?: { subjectId: number; subjectName: string; reason: string }[];
-}
+export type {
+  AutoScheduleAssigned,
+  AutoScheduleResult,
+  AutoScheduleUnassigned,
+} from "@/lib/autoScheduleTypes";
 
 export interface AutoScheduleOptions {
   /** Si se indica, solo se auto-agendan estas asignaturas (deben no estar fijadas). */
@@ -50,6 +36,7 @@ interface Task {
   studentName: string;
   priority: number;
   durationMin: number;
+  sessionParts: number;
   requests: { dayOfWeek: number; startHour: number; endHour: number; prefOrder: number }[];
 }
 
@@ -197,6 +184,11 @@ export async function autoScheduleByTeacher(
 
     for (const m of ss) {
       const durationMin = m.durationMin ?? s.defaultDurationMin;
+      const rawParts = Math.max(1, m.sessionParts ?? 1);
+      const sessionParts =
+        rawParts > 1 && !sessionPartsFitDuration(durationMin, rawParts)
+          ? maxSessionParts(durationMin)
+          : rawParts;
       const reqs = allReq
         .filter((r) => r.subjectId === s.id && r.studentId === m.studentId)
         .map((r) => ({ dayOfWeek: r.dayOfWeek, startHour: r.startHour, endHour: r.endHour, prefOrder: r.prefOrder }))
@@ -209,6 +201,7 @@ export async function autoScheduleByTeacher(
         studentName: m.student?.name ?? `alumno ${m.studentId}`,
         priority: m.priority,
         durationMin,
+        sessionParts,
         requests: reqs,
       });
     }
@@ -362,16 +355,49 @@ export async function autoScheduleByTeacher(
   }
 
   function placeIndividual(task: Task) {
-    const placed = placeIndividualSlot({
-      durationMin: task.durationMin,
-      requests: task.requests,
-      currentFree,
-      studentAvailable: availableByStudent[task.studentId] ?? [],
-      canPlace: (day, start, end) =>
-        !studentBusy(task.studentId, day, start, end) && !teacherBusy(day, start, end),
-    });
+    const parts = Math.max(1, task.sessionParts);
+    const placedList =
+      parts > 1
+        ? placeSplitParts({
+            parts,
+            partDurationMin: SESSION_PART_MIN,
+            requests: task.requests,
+            currentFree,
+            studentAvailable: availableByStudent[task.studentId] ?? [],
+            canPlace: (day, start, end) =>
+              !studentBusy(task.studentId, day, start, end) && !teacherBusy(day, start, end),
+            separateParts: true,
+          })
+        : (() => {
+            const one = placeIndividualSlot({
+              durationMin: task.durationMin,
+              requests: task.requests,
+              currentFree,
+              studentAvailable: availableByStudent[task.studentId] ?? [],
+              canPlace: (day, start, end) =>
+                !studentBusy(task.studentId, day, start, end) && !teacherBusy(day, start, end),
+            });
+            return one ? [one] : [];
+          })();
 
-    if (placed) {
+    if (placedList.length === 0 || (parts > 1 && placedList.length < parts)) {
+      unassigned.push({
+        studentId: task.studentId,
+        studentName: task.studentName,
+        subjectId: task.subjectId,
+        subjectName: task.subjectName,
+        reason:
+          parts > 1 && placedList.length > 0 && placedList.length < parts
+            ? `no caben las ${parts} medias horas sin juntarlas (solo ${placedList.length})`
+            : unassignedReason({
+                teacherHasAvailability: availabilities.length > 0,
+                studentAvailable: availableByStudent[task.studentId] ?? [],
+              }),
+      });
+      return;
+    }
+
+    for (const placed of placedList) {
       plannedInserts.push({
         teacherId,
         subjectId: task.subjectId,
@@ -394,19 +420,7 @@ export async function autoScheduleByTeacher(
       });
       (placedByStudent[task.studentId] ??= []).push(placed);
       occupy(currentFree, placed.day, { start: placed.start, end: placed.end });
-      return;
     }
-
-    unassigned.push({
-      studentId: task.studentId,
-      studentName: task.studentName,
-      subjectId: task.subjectId,
-      subjectName: task.subjectName,
-      reason: unassignedReason({
-        teacherHasAvailability: availabilities.length > 0,
-        studentAvailable: availableByStudent[task.studentId] ?? [],
-      }),
-    });
   }
 
   for (const task of collectiveTasks) placeCollective(task);

@@ -1,6 +1,6 @@
-import { endHourFromDuration, slotStartsForDuration } from "@/lib/hours";
+import { endHourFromDuration, slotStartsForDuration, slotsAreAdjacent } from "@/lib/hours";
 import { freeWithinStudentAvailability, type TimeRange } from "@/lib/studentAvailability";
-import { type Interval } from "@/lib/scheduleIntervals";
+import { cloneFreeByDay, occupy, type Interval } from "@/lib/scheduleIntervals";
 
 export interface SlotRequestPref {
   dayOfWeek: number;
@@ -99,6 +99,86 @@ export function placeIndividualSlot(params: {
     ...fallback,
     prefOrder: sortedReqs.length > 0 ? 0 : null,
   };
+}
+
+/**
+ * Coloca `parts` sesiones de `partDurationMin` minutos.
+ * Si `separateParts` es true, no permite franjas contiguas (mismo día tocándose).
+ */
+export function placeSplitParts(params: {
+  parts: number;
+  partDurationMin: number;
+  requests: SlotRequestPref[];
+  currentFree: Record<number, Interval[]>;
+  studentAvailable: TimeRange[];
+  canPlace: (day: number, start: number, end: number) => boolean;
+  separateParts?: boolean;
+}): PlacedSlot[] {
+  const {
+    parts,
+    partDurationMin,
+    requests,
+    currentFree,
+    studentAvailable,
+    canPlace,
+    separateParts = true,
+  } = params;
+  if (parts < 1 || partDurationMin < 1) return [];
+
+  const result: PlacedSlot[] = [];
+  const free = cloneFreeByDay(currentFree);
+  const localBusy: { day: number; start: number; end: number }[] = [];
+  const sortedReqs = [...requests].sort((a, b) => a.prefOrder - b.prefOrder);
+
+  const canPlaceNow = (day: number, start: number, end: number) => {
+    if (!canPlace(day, start, end)) return false;
+    if (localBusy.some((s) => s.day === day && s.end > start && s.start < end)) return false;
+    if (separateParts) {
+      const candidate = { day, start, end };
+      if (result.some((p) => slotsAreAdjacent(candidate, p))) return false;
+    }
+    return true;
+  };
+
+  const commit = (slot: PlacedSlot) => {
+    result.push(slot);
+    localBusy.push({ day: slot.day, start: slot.start, end: slot.end });
+    occupy(free, slot.day, { start: slot.start, end: slot.end });
+  };
+
+  for (let i = 0; i < parts; i++) {
+    let placed: PlacedSlot | null = null;
+
+    for (const req of sortedReqs) {
+      const hit = findSlotInWindow(
+        free[req.dayOfWeek] ?? [],
+        req.startHour,
+        req.endHour,
+        partDurationMin,
+        (start, end) => canPlaceNow(req.dayOfWeek, start, end),
+      );
+      if (hit) {
+        placed = { day: req.dayOfWeek, start: hit.start, end: hit.end, prefOrder: req.prefOrder };
+        break;
+      }
+    }
+
+    if (!placed) {
+      const search = searchSpaceForStudent(free, studentAvailable);
+      const fallback = findFirstSlot(search, partDurationMin, canPlaceNow);
+      if (fallback) {
+        placed = {
+          ...fallback,
+          prefOrder: sortedReqs.length > 0 ? 0 : null,
+        };
+      }
+    }
+
+    if (!placed) break;
+    commit(placed);
+  }
+
+  return result;
 }
 
 export function unassignedReason(params: {

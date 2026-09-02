@@ -3,7 +3,6 @@ export const APP_SHORT_NAME = "Horario";
 export const APP_DESCRIPTION = "Clases, tutorías y horarios en móvil o escritorio.";
 export const APP_THEME_COLOR = "#ffffff";
 export const APP_BACKGROUND_COLOR = "#f8fafc";
-export const APP_ACCENT_COLOR = "#2563eb";
 
 /** Splash screens de iOS (device-width CSS × pixel-ratio). */
 export const APPLE_SPLASH_SCREENS = [

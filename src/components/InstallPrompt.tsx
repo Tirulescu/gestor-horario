@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Share, Smartphone, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { APP_SHORT_NAME } from "@/lib/pwa";
 import {
   PWA_APP_INSTALLED_EVENT,
@@ -123,13 +124,13 @@ export default function InstallPrompt() {
           <p className="install-prompt-text">{hintFor(platform, canInstall)}</p>
         </div>
         {canInstall && (
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => void install()}>
+          <Button type="button" size="sm" onClick={() => void install()}>
             Instalar
-          </button>
+          </Button>
         )}
-        <button type="button" className="install-prompt-close" onClick={dismiss} aria-label="Cerrar">
+        <Button type="button" variant="ghost" size="iconSm" className="install-prompt-close" onClick={dismiss} aria-label="Cerrar">
           <X size={16} />
-        </button>
+        </Button>
       </div>
     </div>
   );

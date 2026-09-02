@@ -3,81 +3,31 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft, Plus, Trash2, Save, X, BookOpen, GraduationCap, ClipboardList,
+  ArrowLeft, Plus, Trash2, X, BookOpen, GraduationCap, ClipboardList,
   Pencil, ArrowUp, ArrowDown, Sparkles,
 } from "lucide-react";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
-} from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
-} from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
-import { AnimatePresence, Reorder, useDragControls } from "motion/react";
-import { DragHandle } from "@/components/DragHandle";
+import { AnimatePresence, Reorder } from "motion/react";
 import { useToast } from "@/components/Toast";
 import { Switch } from "@/components/ui/switch";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
-import { fmtDurationMin, collectSubjectDurationOptions } from "@/lib/hours";
+import { fmtDurationMin, collectSubjectDurationOptions, SESSION_PART_MIN, maxSessionParts, MIN_DURATION_MIN, DURATION_STEP_MIN } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
 import { invalidate, invalidateMany, put, warmData } from "@/lib/clientCache";
 import { SubjectDetailSkeleton } from "@/components/skeletons";
 import { COPY } from "@/lib/copy";
-
-interface Student { id: number; name: string; grade?: string | null; }
-interface Subject { id: number; name: string; teacherId: number; defaultDurationMin: number; isCollective?: boolean; scheduleFixed?: boolean; teacher?: { name: string; scheduleFixed?: boolean }; }
-interface SubjectStudent {
-  id: number; subjectId: number; studentId: number;
-  durationMin: number | null; priority: number; slotsRequired: number;
-  student: Student;
-}
-interface SlotRequest {
-  id: number; studentId: number; subjectId: number;
-  dayOfWeek: number; startHour: number; endHour: number;
-  prefOrder: number; status: string;
-}
-interface GradeDuration {
-  id: number; subjectId: number; grade: string;
-  durationMin: number; slotsRequired: number;
-}
-type ConfirmTarget =
-  | { kind: "member"; id: number; label: string }
-  | { kind: "gradeRule"; id: number; label: string }
-  | null;
-
-function MemberRow({ m, children, className }: {
-  m: SubjectStudent;
-  children: React.ReactNode; className?: string;
-}) {
-  const controls = useDragControls();
-  return (
-    <Reorder.Item
-      value={m}
-      layout
-      dragListener={false}
-      dragControls={controls}
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.98 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-      whileDrag={{ scale: 1.01, boxShadow: "0 12px 32px rgb(0 0 0 / 0.14)", zIndex: 20 }}
-      className={className}
-    >
-      <div className="flex items-center gap-2 flex-wrap border border-gray-100 rounded-lg px-3 py-2 w-full">
-        <DragHandle controls={controls} />
-        {children}
-      </div>
-    </Reorder.Item>
-  );
-}
-
+import type { ConfirmTarget, GradeDuration, SlotRequest, Student, Subject, SubjectStudent } from "./types";
+import { MemberRow } from "./MemberRow";
+import type { SessionPartsValue } from "./SessionPartsFields";
+import { AddMemberDialog } from "./AddMemberDialog";
+import { EditMemberDialog } from "./EditMemberDialog";
+import { AddGradeDialog } from "./AddGradeDialog";
 
 export default function SubjectDetailClient({ id }: { id: number }) {
   const toast = useToast();
@@ -88,6 +38,8 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([]);
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [autoResult, setAutoResult] = useState<AutoScheduleResult | null>(null);
 
   // member modal
@@ -95,6 +47,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [newStudent, setNewStudent] = useState("");
   const [newSlotsRequired, setNewSlotsRequired] = useState("1");
   const [newDurationMin, setNewDurationMin] = useState("");
+  const [newSessionParts, setNewSessionParts] = useState<SessionPartsValue>({ split: false, sessionParts: "2" });
   const nextPriorityRef = useRef<number | null>(null);
 
   // grade modal
@@ -102,6 +55,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [newGrade, setNewGrade] = useState("");
   const [gradeDurationMin, setGradeDurationMin] = useState("30");
   const [gradeSlotsRequired, setGradeSlotsRequired] = useState("1");
+  const [gradeSessionParts, setGradeSessionParts] = useState<SessionPartsValue>({ split: false, sessionParts: "2" });
   const [gradeDurations, setGradeDurations] = useState<GradeDuration[]>([]);
   const [teacherScheduleFixed, setTeacherScheduleFixed] = useState(false);
 
@@ -109,6 +63,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   const [editMember, setEditMember] = useState<SubjectStudent | null>(null);
   const [editDuration, setEditDuration] = useState("");
   const [editSlots, setEditSlots] = useState("1");
+  const [editSessionParts, setEditSessionParts] = useState<SessionPartsValue>({ split: false, sessionParts: "2" });
 
   const gradeKey = `/api/subject_grade_durations?subjectId=${id}`;
 
@@ -199,23 +154,42 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     setNewStudent("");
     setNewSlotsRequired("1");
     setNewDurationMin("");
+    setNewSessionParts({ split: false, sessionParts: "2" });
     setMemberOpen(true);
   }
 
   async function submitMember() {
+    if (saving) return;
     if (!newStudent) return toast("error", "Selecciona un alumno");
+    const durationForParts = Number(newDurationMin) || defaultDur;
+    const sessionParts = newSessionParts.split ? Number(newSessionParts.sessionParts) : 1;
+    if (newSessionParts.split) {
+      const maxParts = maxSessionParts(durationForParts);
+      if (sessionParts < 2 || sessionParts !== maxParts) {
+        return toast("error", `Con ${fmtDurationMin(durationForParts)} debes dividir en ${maxParts} partes de ${SESSION_PART_MIN} min`);
+      }
+    }
+    if (newDurationMin.trim() !== "") {
+      const d = Number(newDurationMin);
+      if (!d || d < MIN_DURATION_MIN || d % DURATION_STEP_MIN !== 0) {
+        return toast("error", `La duración debe ser múltiplo de ${DURATION_STEP_MIN} min (mín. ${MIN_DURATION_MIN})`);
+      }
+    }
     const payload: Record<string, unknown> = {
       subjectId: id,
       studentId: Number(newStudent),
       slotsRequired: Number(newSlotsRequired),
+      sessionParts,
     };
     if (nextPriorityRef.current != null) payload.priority = nextPriorityRef.current;
     if (newDurationMin.trim() !== "") payload.durationMin = Number(newDurationMin);
+    setSaving(true);
     const res = await fetch("/api/subject_students", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     toast("success", "Alumno añadido");
     setMemberOpen(false);
@@ -227,25 +201,44 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     setEditMember(m);
     setEditDuration(m.durationMin == null ? "" : String(m.durationMin));
     setEditSlots(String(m.slotsRequired));
+    const parts = Math.max(1, m.sessionParts ?? 1);
+    setEditSessionParts({
+      split: parts > 1,
+      sessionParts: String(parts > 1 ? parts : 2),
+    });
   }
 
   async function submitEditMember() {
-    if (!editMember) return;
+    if (!editMember || saving) return;
     const durationMin = editDuration.trim() === "" ? null : Number(editDuration);
     const slotsRequired = Number(editSlots);
+    const durationForParts = durationMin ?? defaultDur;
+    const sessionParts = editSessionParts.split ? Number(editSessionParts.sessionParts) : 1;
+    if (editSessionParts.split) {
+      const maxParts = maxSessionParts(durationForParts);
+      if (sessionParts < 2 || sessionParts !== maxParts) {
+        return toast("error", `Con ${fmtDurationMin(durationForParts)} debes dividir en ${maxParts} partes de ${SESSION_PART_MIN} min`);
+      }
+    }
+    if (durationMin != null && (durationMin < MIN_DURATION_MIN || durationMin % DURATION_STEP_MIN !== 0)) {
+      return toast("error", `La duración debe ser múltiplo de ${DURATION_STEP_MIN} min (mín. ${MIN_DURATION_MIN})`);
+    }
     if (
       slotsRequired === editMember.slotsRequired &&
-      durationMin === editMember.durationMin
+      durationMin === editMember.durationMin &&
+      sessionParts === (editMember.sessionParts ?? 1)
     ) {
       setEditMember(null);
       return;
     }
-    const patch: Record<string, unknown> = { slotsRequired, durationMin };
+    const patch: Record<string, unknown> = { slotsRequired, durationMin, sessionParts };
+    setSaving(true);
     const res = await fetch("/api/subject_students", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: editMember.id, ...patch }),
     });
+    setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     toast("success", "Alumno actualizado");
     setEditMember(null);
@@ -293,9 +286,11 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   }
 
   async function confirmDelete() {
-    if (!confirmTarget) return;
+    if (!confirmTarget || deleting) return;
+    setDeleting(true);
     if (confirmTarget.kind === "member") {
       const res = await fetch(`/api/subject_students?id=${confirmTarget.id}`, { method: "DELETE" });
+      setDeleting(false);
       setConfirmTarget(null);
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -305,6 +300,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       }
     } else {
       const res = await fetch(`/api/subject_grade_durations?id=${confirmTarget.id}`, { method: "DELETE" });
+      setDeleting(false);
       setConfirmTarget(null);
       if (!res.ok) {
         toast("error", (await res.json().catch(() => ({}))).error || "No se pudo borrar");
@@ -338,23 +334,41 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     if (rule) {
       setNewDurationMin(String(rule.durationMin));
       setNewSlotsRequired(String(rule.slotsRequired));
+      const parts = Math.max(1, rule.sessionParts ?? 1);
+      setNewSessionParts({
+        split: parts > 1,
+        sessionParts: String(parts > 1 ? parts : 2),
+      });
     } else {
       setNewDurationMin("");
       setNewSlotsRequired("1");
+      setNewSessionParts({ split: false, sessionParts: "2" });
     }
   }
 
   function openAddGrade() {
     setNewGrade("");
-    setGradeDurationMin("30");
+    setGradeDurationMin("60");
     setGradeSlotsRequired("1");
+    setGradeSessionParts({ split: false, sessionParts: "2" });
     setGradeOpen(true);
   }
 
   async function submitGrade() {
+    if (saving) return;
     if (!newGrade) return toast("error", "Selecciona un curso");
     const durationMin = Number(gradeDurationMin);
-    if (!durationMin || durationMin < 5) return toast("error", "Indica una duración válida");
+    if (!durationMin || durationMin < MIN_DURATION_MIN || durationMin % DURATION_STEP_MIN !== 0) {
+      return toast("error", `Indica una duración múltiplo de ${DURATION_STEP_MIN} min (mín. ${MIN_DURATION_MIN})`);
+    }
+    const sessionParts = gradeSessionParts.split ? Number(gradeSessionParts.sessionParts) : 1;
+    if (gradeSessionParts.split) {
+      const maxParts = maxSessionParts(durationMin);
+      if (sessionParts < 2 || sessionParts !== maxParts) {
+        return toast("error", `Con ${fmtDurationMin(durationMin)} debes dividir en ${maxParts} partes de ${SESSION_PART_MIN} min`);
+      }
+    }
+    setSaving(true);
     const res = await fetch("/api/subject_grade_durations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -363,9 +377,11 @@ export default function SubjectDetailClient({ id }: { id: number }) {
         grade: newGrade,
         durationMin,
         slotsRequired: Number(gradeSlotsRequired) || 1,
+        sessionParts,
         enroll: true,
       }),
     });
+    setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     const data = await res.json();
     toast("success", `Curso añadido: ${data.enrolled} alumno(s) inscrito(s)${data.skipped ? `, ${data.skipped} ya estaban` : ""}`);
@@ -467,8 +483,9 @@ export default function SubjectDetailClient({ id }: { id: number }) {
           </div>
           <div className="flex flex-wrap gap-2 items-center">
             {!teacherScheduleFixed && subject && !subject.scheduleFixed && (
-              <Button disabled={busy} onClick={autoScheduleSubject}>
-                <Sparkles size={16} /> Auto-agendar
+              <Button loading={busy} onClick={autoScheduleSubject}>
+                <Sparkles size={16} />
+                Auto-agendar
               </Button>
             )}
             <div className="inline-flex items-center gap-2 h-11 px-4 rounded-[0.6rem] border border-gray-200 bg-white">
@@ -507,6 +524,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
             {gradeDurations.map((g) => (
               <Badge key={g.id} variant="gray" className="gap-1.5 pr-1">
                 {g.grade}: {fmtDurationMin(g.durationMin)} · {g.slotsRequired} solic.
+                {(g.sessionParts ?? 1) > 1 ? ` · ${g.sessionParts}×${SESSION_PART_MIN} min` : ""}
                 <button
                   type="button"
                   onClick={() => removeGradeRule(g.id, g.grade)}
@@ -536,7 +554,12 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                     <span className="font-medium">{m.student.name}</span>
                     {m.student.grade && <span className="text-gray-400 text-xs">{m.student.grade}</span>}
                     {!subject.isCollective && (
-                      <span className="text-gray-500 text-xs">Duración: {m.durationMin == null ? <span className="italic">{fmtDurationMin(defaultDur)} (defecto)</span> : fmtDurationMin(m.durationMin)}</span>
+                      <>
+                        <span className="text-gray-500 text-xs">Duración: {m.durationMin == null ? <span className="italic">{fmtDurationMin(defaultDur)} (defecto)</span> : fmtDurationMin(m.durationMin)}</span>
+                        {(m.sessionParts ?? 1) > 1 && (
+                          <Badge variant="gray">{m.sessionParts}×{SESSION_PART_MIN} min</Badge>
+                        )}
+                      </>
                     )}
                     {!subject.isCollective && (
                       <Badge
@@ -561,137 +584,57 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       </Card>
       </>)}
 
-      {/* Modals */}
-      <Dialog open={memberOpen} onOpenChange={setMemberOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Añadir alumno a la asignatura</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label htmlFor="m-student">Alumno</Label>
-              <Select value={newStudent} onValueChange={(v) => { setNewStudent(v); applyGradeRuleToForm(v); }}>
-                <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                <SelectContent>
-                  {availableStudents.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      {s.name}{s.grade ? ` · ${s.grade}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {availableStudents.length === 0 && (
-                <div className="mt-2 flex flex-col sm:flex-row sm:items-center gap-2">
-                  <p className="text-xs text-gray-500">Todos los alumnos ya están inscritos.</p>
-                  <Button asChild size="xs" variant="outline">
-                    <Link href="/students"><Plus /> Crear alumno</Link>
-                  </Button>
-                </div>
-              )}
-            </div>
-            <div className="space-y-4">
-              {!subject?.isCollective && (
-                <>
-                  <div>
-                    <Label htmlFor="m-slots">{COPY.slotsRequiredLabel}</Label>
-                    <Input id="m-slots" type="number" min={1} max={10} value={newSlotsRequired} onChange={(e) => setNewSlotsRequired(e.target.value)} />
-                  </div>
-                  <div>
-                    <Label htmlFor="m-dur">{COPY.durationLabel}</Label>
-                    <Input id="m-dur" type="number" min={5} step={5} value={newDurationMin} onChange={(e) => setNewDurationMin(e.target.value)} placeholder={String(defaultDur)} />
-                    {newStudent && gradeRuleFor(allStudents.find((s) => String(s.id) === newStudent)?.grade) && (
-                      <p className="text-xs text-gray-500 mt-1">Pre-rellenado por regla del curso</p>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-            {subject?.isCollective ? (
-              <p className="text-xs text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-                La duración de la sesión colectiva es <strong>{fmtDurationMin(defaultDur)}</strong> (definida en la asignatura).
-              </p>
-            ) : (
-              <p className="text-xs text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-                Prioridad: entrará el <strong>último</strong> de la fila (después de los actuales). Reordénalo luego con ▲▼.
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setMemberOpen(false)}><X size={14} /> Cancelar</Button>
-            <Button onClick={submitMember}><Save size={14} /> Añadir</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AddMemberDialog
+        open={memberOpen}
+        onOpenChange={setMemberOpen}
+        availableStudents={availableStudents}
+        isCollective={Boolean(subject?.isCollective)}
+        defaultDur={defaultDur}
+        studentId={newStudent}
+        onStudentChange={(v) => { setNewStudent(v); applyGradeRuleToForm(v); }}
+        slotsRequired={newSlotsRequired}
+        onSlotsRequiredChange={setNewSlotsRequired}
+        durationMin={newDurationMin}
+        onDurationMinChange={setNewDurationMin}
+        sessionParts={newSessionParts}
+        onSessionPartsChange={setNewSessionParts}
+        gradeRuleHint={Boolean(newStudent && gradeRuleFor(allStudents.find((s) => String(s.id) === newStudent)?.grade))}
+        saving={saving}
+        onSubmit={submitMember}
+      />
 
-      <Dialog open={gradeOpen} onOpenChange={setGradeOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Añadir curso a la asignatura</DialogTitle>
-            <DialogDescription>Inscribe el curso con una duración.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label htmlFor="g-grade">Curso</Label>
-              <Select value={newGrade} onValueChange={setNewGrade}>
-                <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
-                <SelectContent>
-                  {grades.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="g-dur">Duración de clase para este curso (minutos)</Label>
-                <Input id="g-dur" type="number" min={5} step={5} value={gradeDurationMin} onChange={(e) => setGradeDurationMin(e.target.value)} />
-              </div>
-              <div>
-                <Label htmlFor="g-slots">{COPY.slotsRequiredLabel}</Label>
-                <Input id="g-slots" type="number" min={1} max={10} value={gradeSlotsRequired} onChange={(e) => setGradeSlotsRequired(e.target.value)} />
-              </div>
-            </div>
-            {newGrade && (
-              <p className="text-xs text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-                Se inscribirán los alumnos de <strong>{newGrade}</strong> que aún no estén en esta asignatura, cada uno con clase de <strong>{fmtDurationMin(Number(gradeDurationMin) || 0)}</strong>.
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setGradeOpen(false)}><X size={14} /> Cancelar</Button>
-            <Button onClick={submitGrade}><Save size={14} /> Añadir curso</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AddGradeDialog
+        open={gradeOpen}
+        onOpenChange={setGradeOpen}
+        grades={grades}
+        grade={newGrade}
+        onGradeChange={setNewGrade}
+        durationMin={gradeDurationMin}
+        onDurationMinChange={setGradeDurationMin}
+        slotsRequired={gradeSlotsRequired}
+        onSlotsRequiredChange={setGradeSlotsRequired}
+        sessionParts={gradeSessionParts}
+        onSessionPartsChange={setGradeSessionParts}
+        saving={saving}
+        onSubmit={submitGrade}
+      />
 
-      <Dialog open={editMember != null} onOpenChange={(o) => { if (!o) setEditMember(null); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader className="text-center sm:text-center">
-            <DialogTitle>Editar inscripción</DialogTitle>
-          </DialogHeader>
-          <div className="mx-auto w-full max-w-xs space-y-4 py-1">
-            {!subject?.isCollective && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="em-slots">{COPY.slotsRequiredLabel}</Label>
-                  <Input id="em-slots" type="number" min={1} max={10} value={editSlots} onChange={(e) => setEditSlots(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="em-dur">{COPY.durationLabel}</Label>
-                  <Input id="em-dur" type="number" min={5} step={5} value={editDuration} onChange={(e) => setEditDuration(e.target.value)} placeholder={String(defaultDur)} />
-                </div>
-              </>
-            )}
-            {subject?.isCollective && (
-              <p className="text-xs text-gray-500 text-center">En asignaturas colectivas la duración es común: {fmtDurationMin(defaultDur)}.</p>
-            )}
-          </div>
-          <DialogFooter className="sm:justify-center gap-2">
-            <Button variant="outline" onClick={() => setEditMember(null)}><X size={14} /> Cancelar</Button>
-            <Button onClick={submitEditMember}><Save size={14} /> Guardar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EditMemberDialog
+        open={editMember != null}
+        onOpenChange={(o) => { if (!o) setEditMember(null); }}
+        isCollective={Boolean(subject?.isCollective)}
+        defaultDur={defaultDur}
+        slotsRequired={editSlots}
+        onSlotsRequiredChange={setEditSlots}
+        durationMin={editDuration}
+        onDurationMinChange={setEditDuration}
+        sessionParts={editSessionParts}
+        onSessionPartsChange={setEditSessionParts}
+        saving={saving}
+        onSubmit={submitEditMember}
+      />
 
-      <AlertDialog open={confirmTarget !== null} onOpenChange={(o) => { if (!o) setConfirmTarget(null); }}>
+      <AlertDialog open={confirmTarget !== null} onOpenChange={(o) => { if (!o && !deleting) setConfirmTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -700,8 +643,16 @@ export default function SubjectDetailClient({ id }: { id: number }) {
             <AlertDialogDescription>{confirmMessage}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>Borrar</AlertDialogAction>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              loading={deleting}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              Borrar
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

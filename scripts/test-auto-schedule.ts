@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { mergeIntervals, occupy, splitFree } from "../src/lib/scheduleIntervals";
-import { placeIndividualSlot, unassignedReason } from "../src/lib/schedulePlacement";
-import { slotOverlapsBlocked, slotWithinAvailable, type TimeRange } from "../src/lib/studentAvailability";
+import { placeIndividualSlot, placeSplitParts, unassignedReason } from "../src/lib/schedulePlacement";
+import {
+  carveAvailabilityAroundBlocked,
+  slotOverlapsBlocked,
+  slotWithinAvailable,
+  type TimeRange,
+} from "../src/lib/studentAvailability";
+import { isValidDurationMin, sessionPartsOptions } from "../src/lib/hours";
 
 function canPlaceStudent(
   available: TimeRange[],
@@ -227,6 +233,80 @@ function canPlaceStudent(
     "sin hueco libre dentro de su disponibilidad",
   );
   console.log("✓ motivos de no colocación distinguen disponibilidad");
+}
+
+{
+  const available: TimeRange[] = [
+    { day: 0, start: 10, end: 12 },
+    { day: 1, start: 16, end: 18 },
+  ];
+  const placed = placeSplitParts({
+    parts: 2,
+    partDurationMin: 30,
+    requests: [
+      { dayOfWeek: 0, startHour: 10, endHour: 10.5, prefOrder: 1 },
+      { dayOfWeek: 1, startHour: 16, endHour: 16.5, prefOrder: 2 },
+    ],
+    currentFree: {
+      0: [{ start: 10, end: 12 }],
+      1: [{ start: 16, end: 18 }],
+    },
+    studentAvailable: available,
+    canPlace: canPlaceStudent(available, []),
+    separateParts: true,
+  });
+  assert.equal(placed.length, 2);
+  assert.equal(placed[0]!.start, 10);
+  assert.equal(placed[0]!.end, 10.5);
+  assert.equal(placed[1]!.start, 16);
+  assert.equal(placed[1]!.end, 16.5);
+  console.log("✓ 2×30 min en días distintos cubren una asignatura de 60");
+}
+
+{
+  const available: TimeRange[] = [{ day: 0, start: 10, end: 14 }];
+  const placed = placeSplitParts({
+    parts: 2,
+    partDurationMin: 30,
+    requests: [],
+    currentFree: { 0: [{ start: 10, end: 14 }] },
+    studentAvailable: available,
+    canPlace: canPlaceStudent(available, []),
+    separateParts: true,
+  });
+  assert.equal(placed.length, 2);
+  assert.equal(placed[0]!.start, 10);
+  assert.equal(placed[0]!.end, 10.5);
+  // La segunda no puede ir pegada (10:30); debe saltar a 11:00
+  assert.equal(placed[1]!.start, 11);
+  assert.equal(placed[1]!.end, 11.5);
+  console.log("✓ las medias horas no se colocan contiguas");
+}
+
+{
+  const carved = carveAvailabilityAroundBlocked(
+    [{ day: 0, start: 10, end: 14 }],
+    [{ day: 0, start: 12, end: 13 }],
+  );
+  assert.deepEqual(carved, [
+    { day: 0, start: 10, end: 12 },
+    { day: 0, start: 13, end: 14 },
+  ]);
+  const none = carveAvailabilityAroundBlocked(
+    [{ day: 0, start: 12, end: 13 }],
+    [{ day: 0, start: 12, end: 13 }],
+  );
+  assert.deepEqual(none, []);
+  console.log("✓ disponibilidad se divide alrededor de un bloqueo");
+}
+
+{
+  assert.equal(isValidDurationMin(45), false);
+  assert.equal(isValidDurationMin(90), true);
+  assert.deepEqual(sessionPartsOptions(90), [3]);
+  assert.deepEqual(sessionPartsOptions(120), [4]);
+  assert.deepEqual(sessionPartsOptions(60), [2]);
+  console.log("✓ duraciones múltiplo de 30 y partes que cubren el total");
 }
 
 console.log("\nTodos los tests de colocación individual pasaron.");

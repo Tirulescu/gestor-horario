@@ -8,8 +8,3 @@ export function getGoogleDisplayName(user: Pick<User, "email" | "user_metadata">
   if (user.email) return user.email.split("@")[0] ?? "Usuario";
   return "Usuario";
 }
-
-export function getGoogleAvatarUrl(user: Pick<User, "user_metadata">): string | null {
-  const url = user.user_metadata?.avatar_url;
-  return typeof url === "string" && url.length > 0 ? url : null;
-}

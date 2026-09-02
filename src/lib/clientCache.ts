@@ -91,7 +91,7 @@ if (typeof window !== "undefined") {
   });
 }
 
-export function peek<T>(key: string): T | null {
+function peek<T>(key: string): T | null {
   const v = store()[key];
   return v === undefined ? null : (v as T);
 }
@@ -138,6 +138,7 @@ export const WARM_ENDPOINTS = [
   "/api/subjects",
   "/api/students",
   "/api/subject_students",
+  "/api/subject_grade_durations",
   "/api/slot_requests",
   "/api/assignments",
   "/api/availabilities",

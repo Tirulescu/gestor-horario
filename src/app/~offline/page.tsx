@@ -1,6 +1,7 @@
 "use client";
 
 import { CalendarClock, WifiOff } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { APP_NAME } from "@/lib/pwa";
 
 export default function OfflinePage() {
@@ -18,9 +19,9 @@ export default function OfflinePage() {
           {APP_NAME} necesita internet para cargar horarios y alumnos. Revisa la red e inténtalo de
           nuevo.
         </p>
-        <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
+        <Button type="button" onClick={() => window.location.reload()}>
           Reintentar
-        </button>
+        </Button>
       </div>
     </div>
   );

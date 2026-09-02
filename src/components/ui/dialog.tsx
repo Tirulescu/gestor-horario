@@ -56,9 +56,7 @@ function Dialog({
   );
 }
 
-const DialogTrigger = DialogPrimitive.Trigger;
 const DialogPortal = DialogPrimitive.Portal;
-const DialogClose = DialogPrimitive.Close;
 
 type DialogSize = "sm" | "md" | "lg" | "xl";
 
@@ -205,18 +203,6 @@ function DialogContent({
 }
 DialogContent.displayName = "DialogContent";
 
-function DialogContentAnimated({
-  className,
-  children,
-  ...props
-}: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
-  return (
-    <DialogContent className={className} {...props}>
-      {children}
-    </DialogContent>
-  );
-}
-
 function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("mb-4 flex shrink-0 flex-col items-start gap-1 pr-11", className)} {...props} />;
 }
@@ -258,11 +244,7 @@ DialogDescription.displayName = "DialogDescription";
 
 export {
   Dialog,
-  DialogPortal,
-  DialogClose,
-  DialogTrigger,
   DialogContent,
-  DialogContentAnimated,
   DialogHeader,
   DialogFooter,
   DialogTitle,

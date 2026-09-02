@@ -183,15 +183,6 @@ export function AuthMenuSkeleton() {
   return <Skeleton className="h-9 w-9 rounded-full sm:h-9 sm:w-28 sm:rounded-lg" aria-hidden />;
 }
 
-export function BadgeGroupSkeleton() {
-  return (
-    <div className="flex gap-1" aria-busy="true">
-      <Skeleton className="h-5 w-20 rounded-full" />
-      <Skeleton className="h-5 w-16 rounded-full" />
-    </div>
-  );
-}
-
 export function HeaderActionsSkeleton() {
   return (
     <div className="flex flex-wrap gap-2 items-center" aria-busy="true">

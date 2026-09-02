@@ -3,7 +3,7 @@ import { db, schema } from "@/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { apiError, safeJson, validateDay, validateHourRange } from "@/lib/validate";
 import { normalizeRanges, validateSlotRequest } from "@/lib/studentAvailability";
-import { resolveMemberDurationMin, slotMatchesDuration } from "@/lib/hours";
+import { resolveMemberDurationMin, slotFitsMaxDuration } from "@/lib/hours";
 import {
   requireTeacher,
   assertSubjectOwned,
@@ -82,8 +82,8 @@ export async function POST(req: NextRequest) {
   if (hErr) return apiError(hErr);
 
   const requiredDurationMin = await getRequiredDurationMin(subjectId, studentId);
-  if (requiredDurationMin != null && !slotMatchesDuration(startHour, endHour, requiredDurationMin)) {
-    return apiError(`La solicitud debe durar exactamente ${requiredDurationMin} min`);
+  if (requiredDurationMin != null && !slotFitsMaxDuration(startHour, endHour, requiredDurationMin)) {
+    return apiError(`La franja no puede superar ${requiredDurationMin} min (puedes dividirla en varias solicitudes)`);
   }
 
   let prefOrder = Number(body.prefOrder);
@@ -150,8 +150,8 @@ export async function PATCH(req: NextRequest) {
   if (hErr) return apiError(hErr);
 
   const requiredDurationMin = await getRequiredDurationMin(row.subjectId, row.studentId);
-  if (requiredDurationMin != null && !slotMatchesDuration(startHour, endHour, requiredDurationMin)) {
-    return apiError(`La solicitud debe durar exactamente ${requiredDurationMin} min`);
+  if (requiredDurationMin != null && !slotFitsMaxDuration(startHour, endHour, requiredDurationMin)) {
+    return apiError(`La franja no puede superar ${requiredDurationMin} min (puedes dividirla en varias solicitudes)`);
   }
 
   const student = await db.query.students.findFirst({ where: eq(schema.students.id, row.studentId) });

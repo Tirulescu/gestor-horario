@@ -45,6 +45,7 @@ interface Assignment {
   dayOfWeek: number;
   startHour: number;
   endHour: number;
+  collectiveSessionId?: string | null;
   subject?: { id: number; name: string };
   student?: { id: number; name: string };
 }
@@ -55,6 +56,8 @@ interface StudentsCalendarDialogProps {
   students: Student[];
   subjects?: Subject[];
   initialView?: ViewMode;
+  onRemoveBlock?: (student: Student, indices: number[]) => Promise<boolean | void>;
+  onRemoveEvent?: (assignmentId: number) => Promise<boolean | void>;
 }
 
 function overlaps(
@@ -71,6 +74,8 @@ function SlotOverlapDialog({
   startHour,
   endHour,
   items,
+  canDelete,
+  onRequestDelete,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -78,6 +83,8 @@ function SlotOverlapDialog({
   startHour: number;
   endHour: number;
   items: WeekBlock[];
+  canDelete: boolean;
+  onRequestDelete: (item: WeekBlock) => void;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -127,6 +134,7 @@ function SlotOverlapDialog({
           <h2 className="text-lg font-semibold leading-snug">En esta franja</h2>
           <p className="mt-1 text-sm text-gray-500">
             {title} · {items.length} elemento{items.length === 1 ? "" : "s"}
+            {canDelete ? " · puedes eliminar desde aquí" : ""}
           </p>
         </div>
         <div className="space-y-2.5 overflow-y-auto min-h-0">
@@ -158,6 +166,18 @@ function SlotOverlapDialog({
                       ))}
                     </dl>
                   )}
+                  {canDelete && item.payload && (
+                    <div className="mt-3 flex justify-end border-t border-dashed border-gray-200 pt-2.5">
+                      <button
+                        type="button"
+                        onClick={() => onRequestDelete(item)}
+                        className="inline-flex items-center justify-center w-8 h-8 rounded-full text-red-600 hover:bg-red-50"
+                        aria-label="Quitar"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -175,6 +195,8 @@ export default function StudentsCalendarDialog({
   students,
   subjects = [],
   initialView = "blocks",
+  onRemoveBlock,
+  onRemoveEvent,
 }: StudentsCalendarDialogProps) {
   const [view, setView] = useState<ViewMode>(initialView);
   const [gradeFilter, setGradeFilter] = useState("all");
@@ -222,7 +244,7 @@ export default function StudentsCalendarDialog({
       .catch(() => { if (alive) setAssignments([]); })
       .finally(() => { if (alive) setLoadingEvents(false); });
     return () => { alive = false; };
-  }, [open]);
+  }, [open, students]);
 
   const grades = useMemo(
     () => Array.from(new Set(students.map((s) => (s.grade ?? "").trim()).filter(Boolean))).sort(),
@@ -293,6 +315,7 @@ export default function StudentsCalendarDialog({
             { label: "Día", value: DAYS[r.day] },
             { label: "Horario", value: fmtRange(r.start, r.end) },
           ],
+          payload: { kind: "student-block", studentId: s.id, blockIndex: i },
         });
       });
     }
@@ -324,16 +347,18 @@ export default function StudentsCalendarDialog({
           details: [
             { label: "Alumno", value: studentName },
             ...(grade ? [{ label: "Curso", value: grade }] : []),
-            { label: "Tipo", value: "Evento (clase)" },
+            { label: "Tipo", value: "Clase" },
             { label: "Asignatura", value: subjectName },
             { label: "Día", value: DAYS[a.dayOfWeek] },
             { label: "Horario", value: fmtRange(a.startHour, a.endHour) },
           ],
+          payload: { kind: "assignment", assignmentId: a.id, studentId: a.studentId },
         } satisfies WeekBlock;
       });
   }, [assignments, filteredStudentIds, students, subjects, subjectColor]);
 
   const items = view === "blocks" ? blockItems : eventItems;
+  const canDelete = view === "blocks" ? !!onRemoveBlock : !!onRemoveEvent;
 
   const legend = useMemo(() => {
     if (view === "blocks") {
@@ -364,31 +389,51 @@ export default function StudentsCalendarDialog({
       .sort((a, b) => a.startHour - b.startHour || a.title.localeCompare(b.title));
   }, [items, slotFocus]);
 
+  const requestDelete = useCallback(async (item: WeekBlock) => {
+    const p = item.payload;
+    if (!p) return;
+    if (p.kind === "student-block" && p.studentId != null && p.blockIndex != null) {
+      const student = students.find((s) => s.id === p.studentId);
+      if (!student) return;
+      await onRemoveBlock?.(student, [p.blockIndex]);
+      closeSlot();
+      return;
+    }
+    if (p.kind === "assignment" && p.assignmentId != null) {
+      const deleted = assignments.find((a) => a.id === p.assignmentId);
+      await onRemoveEvent?.(p.assignmentId);
+      setAssignments((cur) => {
+        if (deleted?.collectiveSessionId) {
+          return cur.filter((a) => a.collectiveSessionId !== deleted.collectiveSessionId);
+        }
+        return cur.filter((a) => a.id !== p.assignmentId);
+      });
+      closeSlot();
+    }
+  }, [students, onRemoveBlock, onRemoveEvent, assignments, closeSlot]);
+
   const emptyMessage = view === "blocks"
     ? "Ningún bloqueo con los filtros seleccionados."
     : loadingEvents
-      ? "Cargando eventos…"
-      : "Ningún evento (clase) con los filtros seleccionados.";
+      ? "Cargando clases…"
+      : "Ninguna clase con los filtros seleccionados.";
 
   return (
     <Dialog open={open} onOpenChange={handleCalendarOpenChange}>
-      <DialogContent size="xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CalendarDays size={18} className="text-blue-600" />
-            Calendario de alumnos
-            {items.length > 0 && (
-              <span className="text-sm font-normal text-gray-500">({items.length})</span>
-            )}
+            Calendarios de alumnos
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-y-auto" style={{ maxHeight: "70dvh" }}>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => setView("blocks")}
-              className={`chip inline-flex items-center gap-1.5 ${view === "blocks" ? "chip-active" : ""}`}
+              className={`chip ${view === "blocks" ? "chip-active" : ""}`}
             >
               <CalendarOff size={14} />
               Bloqueos
@@ -396,10 +441,10 @@ export default function StudentsCalendarDialog({
             <button
               type="button"
               onClick={() => setView("events")}
-              className={`chip inline-flex items-center gap-1.5 ${view === "events" ? "chip-active" : ""}`}
+              className={`chip ${view === "events" ? "chip-active" : ""}`}
             >
               <CalendarPlus size={14} />
-              Eventos
+              Clases
             </button>
           </div>
 
@@ -444,7 +489,7 @@ export default function StudentsCalendarDialog({
               endH={SCHEDULE_DAY_END}
               inDialog
               allowFullscreen
-              fullscreenTitle={view === "blocks" ? "Bloqueos de alumnos" : "Eventos de alumnos"}
+              fullscreenTitle={view === "blocks" ? "Bloqueos de alumnos" : "Clases de alumnos"}
               blocks={items}
               showLegend
               legend={legend}
@@ -454,7 +499,7 @@ export default function StudentsCalendarDialog({
 
           {items.length > 0 && (
             <p className="text-xs text-gray-500">
-              Pulsa un bloque para ver todo lo que coincide en esa franja.
+              Pulsa un bloque para ver el detalle{canDelete ? " y eliminarlo" : ""}.
             </p>
           )}
         </div>
@@ -470,6 +515,8 @@ export default function StudentsCalendarDialog({
           startHour={slotFocus?.startHour ?? 0}
           endHour={slotFocus?.endHour ?? 0}
           items={overlapping}
+          canDelete={canDelete}
+          onRequestDelete={requestDelete}
         />
       </DialogContent>
     </Dialog>

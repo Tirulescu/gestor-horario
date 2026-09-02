@@ -8,33 +8,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { DAYS } from "@/lib/validate";
 import { fmtRange } from "@/lib/hours";
+import type {
+  AutoScheduleAssigned,
+  AutoScheduleResult,
+} from "@/lib/autoScheduleTypes";
 
-export interface AutoScheduleAssigned {
-  studentId: number;
-  studentName: string;
-  subjectId: number;
-  subjectName: string;
-  day: number;
-  startHour: number;
-  endHour: number;
-  prefOrder?: number | null;
-  isCollective?: boolean;
-  collectiveSessionId?: string | null;
-}
-
-export interface AutoScheduleUnassigned {
-  studentId: number;
-  studentName: string;
-  subjectId: number;
-  subjectName: string;
-  reason: string;
-}
-
-export interface AutoScheduleResult {
-  assigned: AutoScheduleAssigned[];
-  unassigned: AutoScheduleUnassigned[];
-  skipped?: { subjectId: number; subjectName: string; reason: string }[];
-}
+export type { AutoScheduleResult } from "@/lib/autoScheduleTypes";
 
 function prefLabel(prefOrder: number | null | undefined): { label: string; variant: "success" | "warn" | "gray" } {
   if (prefOrder == null) return { label: "Sin peticiones", variant: "gray" };

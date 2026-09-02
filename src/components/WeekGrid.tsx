@@ -8,6 +8,23 @@ import { fmtHour, fmtDayRange } from "@/lib/hours";
 import CalendarEventDetailDialog, { type CalendarEventDetailRow } from "@/components/CalendarEventDetailDialog";
 
 const MIN_FIT_HOUR_HEIGHT = 10;
+/** Suelo solo para cabecera del día vacío (sin forzar columnas anchas). */
+const EMPTY_DAY_MIN_PX = 72;
+const BLOCK_H_PAD_PX = 20; // padding del bloque + huecos de columna
+const DAY_COL_PAD_PX = 8;
+
+let measureCanvas: HTMLCanvasElement | null = null;
+
+function measureTextPx(text: string, font: string): number {
+  if (typeof document === "undefined") {
+    return Math.ceil(text.length * 7);
+  }
+  if (!measureCanvas) measureCanvas = document.createElement("canvas");
+  const ctx = measureCanvas.getContext("2d");
+  if (!ctx) return Math.ceil(text.length * 7);
+  ctx.font = font;
+  return Math.ceil(ctx.measureText(text).width);
+}
 
 function zoneHours(zones?: Record<number, { start: number; end: number }[]>): number[] {
   if (!zones) return [];
@@ -42,6 +59,25 @@ export interface WeekBlock {
   color: string;
   detailTitle?: string;
   details?: CalendarEventDetailRow[];
+  /** Metadatos para acciones (p. ej. eliminar desde el calendario). */
+  payload?: {
+    kind: "student-block" | "assignment";
+    studentId?: number;
+    blockIndex?: number;
+    assignmentId?: number;
+  };
+}
+
+function estimateBlockContentPx(block: WeekBlock, compact: boolean): number {
+  const titleSize = compact ? "10.4px" : "11.2px";
+  const timeSize = compact ? "9px" : "9.92px";
+  const titleFont = `600 ${titleSize} ui-sans-serif, system-ui, sans-serif`;
+  const bodyFont = `400 ${titleSize} ui-sans-serif, system-ui, sans-serif`;
+  const timeFont = `400 ${timeSize} ui-sans-serif, system-ui, sans-serif`;
+  const title = measureTextPx(block.title, titleFont);
+  const sub = block.subtitle ? measureTextPx(block.subtitle, bodyFont) : 0;
+  const time = measureTextPx(`${fmtHour(block.startHour)}–${fmtHour(block.endHour)}`, timeFont);
+  return Math.max(title, sub, time) + BLOCK_H_PAD_PX + DAY_COL_PAD_PX;
 }
 
 interface WeekGridProps {
@@ -149,9 +185,6 @@ export default function WeekGrid({
 
   const totalHoursRef = useRef(0);
 
-  const colTemplate = shouldFitViewport
-    ? `var(--weekgrid-gutter, 52px) repeat(7, 1fr)`
-    : `var(--weekgrid-gutter, 52px) repeat(7, minmax(var(--weekgrid-col-min, 128px), 1fr))`;
   const contentHours = useMemo(() => {
     const hours = [
       ...blocks.flatMap((b) => [b.startHour, b.endHour]),
@@ -200,6 +233,39 @@ export default function WeekGrid({
     }
     return result;
   }, [blocks]);
+
+  /** Carriles paralelos por día (mín. 1): define el ancho relativo de cada columna. */
+  const dayLaneCounts = useMemo(() => {
+    const counts: number[] = [];
+    for (let day = 0; day < 7; day++) {
+      const dayLayout = layout[day];
+      counts.push(dayLayout?.[0]?.cols ?? 1);
+    }
+    return counts;
+  }, [layout]);
+
+  /** Ancho fijo por día = texto más largo × carriles (sin base grande ni crecimiento fr). */
+  const dayMinWidthsPx = useMemo(() => {
+    return dayLaneCounts.map((_lanes, day) => {
+      const dayLayout = layout[day] ?? [];
+      if (dayLayout.length === 0) return EMPTY_DAY_MIN_PX;
+      let maxLaneContent = 0;
+      for (const { block, cols } of dayLayout) {
+        // Cada bloque solo ocupa 1/cols del día → el día debe ser cols × ancho del texto
+        maxLaneContent = Math.max(maxLaneContent, estimateBlockContentPx(block, compact) * cols);
+      }
+      return Math.max(EMPTY_DAY_MIN_PX, maxLaneContent);
+    });
+  }, [dayLaneCounts, layout, compact, mounted]);
+
+  const gridContentMinPx = useMemo(
+    () => dayMinWidthsPx.reduce((sum, w) => sum + w, 0),
+    [dayMinWidthsPx],
+  );
+
+  const colTemplate = shouldFitViewport
+    ? `var(--weekgrid-gutter, 52px) repeat(7, 1fr)`
+    : `var(--weekgrid-gutter, 52px) ${dayMinWidthsPx.map((px) => `${px}px`).join(" ")}`;
 
   const defaultLegend = useMemo(() => {
     const items: { label: string; color: string; dashed?: boolean; striped?: boolean }[] = [];
@@ -347,7 +413,7 @@ export default function WeekGrid({
 
   const gridMinWidth = shouldFitViewport
     ? undefined
-    : `calc(var(--weekgrid-gutter) + 7 * var(--weekgrid-col-min))`;
+    : `calc(var(--weekgrid-gutter) + ${gridContentMinPx}px)`;
 
   const gridContent = (
     <div className={"weekgrid-inner" + (shouldFitViewport ? " weekgrid-inner-fit" : " space-y-3")}>
@@ -360,7 +426,12 @@ export default function WeekGrid({
           >
             <div
               className="weekgrid-pro-header"
-              style={{ display: "grid", gridTemplateColumns: colTemplate, minWidth: gridMinWidth }}
+              style={{
+                display: "grid",
+                gridTemplateColumns: colTemplate,
+                width: gridMinWidth,
+                minWidth: gridMinWidth,
+              }}
             >
               <div className="weekgrid-pro-corner">Hora</div>
               {DAYS.map((d, day) => (
@@ -383,6 +454,7 @@ export default function WeekGrid({
                 display: "grid",
                 gridTemplateColumns: colTemplate,
                 position: "relative",
+                width: gridMinWidth,
                 minWidth: gridMinWidth,
               }}
             >

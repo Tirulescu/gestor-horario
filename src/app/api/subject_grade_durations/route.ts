@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
 import { eq, and } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
+import { durationMinError, sessionPartsFitDuration, SESSION_PART_MIN } from "@/lib/hours";
 import {
   requireTeacher,
   assertSubjectOwned,
@@ -13,6 +14,7 @@ async function enrollStudentInSubject(
   studentId: number,
   durationMin: number | null,
   slotsRequired: number,
+  sessionParts = 1,
 ) {
   const exists = await db.query.subjectStudents.findFirst({
     where: and(
@@ -27,10 +29,11 @@ async function enrollStudentInSubject(
   });
   const maxP = siblings.reduce((m, x) => Math.max(m, x.priority), 0);
   const priority = siblings.length === 0 ? 1 : maxP + 1;
+  const parts = Math.min(12, Math.max(1, Math.floor(sessionParts) || 1));
 
   const [created] = await db
     .insert(schema.subjectStudents)
-    .values({ subjectId, studentId, durationMin, priority, slotsRequired })
+    .values({ subjectId, studentId, durationMin, priority, slotsRequired, sessionParts: parts })
     .returning();
   return { enrolled: true, row: created };
 }
@@ -61,10 +64,20 @@ export async function POST(req: NextRequest) {
   const grade = String(body.grade ?? "").trim();
   const durationMin = Number(body.durationMin);
   const slotsRequired = Number(body.slotsRequired ?? 1);
+  let sessionParts = body.sessionParts != null ? Number(body.sessionParts) : 1;
+  if (!Number.isFinite(sessionParts) || sessionParts < 1) sessionParts = 1;
+  sessionParts = Math.min(12, Math.floor(sessionParts));
   const enroll = body.enroll !== false;
 
   if (!subjectId || !grade) return apiError("subjectId y grade requeridos");
-  if (!durationMin || durationMin < 5) return apiError("durationMin debe ser al menos 5");
+  const dErr = durationMinError(durationMin);
+  if (dErr) return apiError(dErr);
+  if (sessionParts > 1 && !sessionPartsFitDuration(durationMin, sessionParts)) {
+    const max = Math.floor(durationMin / SESSION_PART_MIN);
+    return apiError(
+      `Con ${durationMin} min debes dividir en exactamente ${max} partes de ${SESSION_PART_MIN} min (o no dividir)`,
+    );
+  }
 
   const denied = await assertSubjectOwned(subjectId, auth.teacher.id);
   if (denied) return denied;
@@ -80,13 +93,13 @@ export async function POST(req: NextRequest) {
   if (existing) {
     [rule] = await db
       .update(schema.subjectGradeDurations)
-      .set({ durationMin, slotsRequired })
+      .set({ durationMin, slotsRequired, sessionParts })
       .where(eq(schema.subjectGradeDurations.id, existing.id))
       .returning();
   } else {
     [rule] = await db
       .insert(schema.subjectGradeDurations)
-      .values({ subjectId, grade, durationMin, slotsRequired })
+      .values({ subjectId, grade, durationMin, slotsRequired, sessionParts })
       .returning();
   }
 
@@ -102,7 +115,7 @@ export async function POST(req: NextRequest) {
     );
 
     for (const st of targets) {
-      const result = await enrollStudentInSubject(subjectId, st.id, durationMin, slotsRequired);
+      const result = await enrollStudentInSubject(subjectId, st.id, durationMin, slotsRequired, sessionParts);
       if (result.enrolled) enrolled++;
       else skipped++;
     }

@@ -42,9 +42,3 @@ export async function ensureTeacherForUser(user: User) {
     throw new Error("No se pudo crear el perfil de profesor");
   }
 }
-
-export async function getTeacherForUser(userId: string) {
-  return db.query.teachers.findFirst({
-    where: eq(schema.teachers.authUserId, userId),
-  });
-}

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
+import { durationMinError, sessionPartsFitDuration, SESSION_PART_MIN } from "@/lib/hours";
 import {
   requireTeacher,
   assertSubjectOwned,
@@ -9,6 +10,21 @@ import {
   assertSubjectStudentOwned,
   getSubjectIdsForTeacher,
 } from "@/lib/auth/requireTeacher";
+
+function clampSessionParts(raw: unknown, fallback = 1): number {
+  let sessionParts = Number(raw);
+  if (!Number.isFinite(sessionParts) || sessionParts < 1) sessionParts = fallback;
+  return Math.min(12, Math.floor(sessionParts));
+}
+
+function sessionPartsError(totalMin: number, sessionParts: number): string | null {
+  if (sessionParts <= 1) return null;
+  if (!sessionPartsFitDuration(totalMin, sessionParts)) {
+    const max = Math.floor(totalMin / SESSION_PART_MIN);
+    return `Con ${totalMin} min debes dividir en exactamente ${max} partes de ${SESSION_PART_MIN} min (o no dividir)`;
+  }
+  return null;
+}
 
 export async function GET(req: NextRequest) {
   const auth = await requireTeacher();
@@ -69,9 +85,11 @@ export async function POST(req: NextRequest) {
 
   let durationMin = body.durationMin != null ? Number(body.durationMin) : null;
   let slotsRequired = Number(body.slotsRequired ?? 1);
+  const sessionPartsProvided = body.sessionParts != null;
+  let sessionParts = sessionPartsProvided ? clampSessionParts(body.sessionParts) : 1;
 
   // Si no se indica duración, aplicar regla del curso del alumno (si existe).
-  if (durationMin == null && student.grade) {
+  if (student.grade) {
     const gradeRule = await db.query.subjectGradeDurations.findFirst({
       where: and(
         eq(schema.subjectGradeDurations.subjectId, subjectId),
@@ -79,10 +97,26 @@ export async function POST(req: NextRequest) {
       ),
     });
     if (gradeRule) {
-      durationMin = gradeRule.durationMin;
+      if (durationMin == null) durationMin = gradeRule.durationMin;
       if (body.slotsRequired == null) slotsRequired = gradeRule.slotsRequired;
+      if (!sessionPartsProvided) sessionParts = Math.max(1, gradeRule.sessionParts ?? 1);
     }
   }
+
+  if (durationMin != null) {
+    const dErr = durationMinError(durationMin);
+    if (dErr) return apiError(dErr);
+  }
+
+  const total =
+    durationMin ??
+    (
+      await db.query.subjects.findFirst({ where: eq(schema.subjects.id, subjectId) })
+    )?.defaultDurationMin ??
+    60;
+  const partsErr = sessionPartsError(total, sessionParts);
+  if (partsErr) return apiError(partsErr);
+
   let priority = body.priority != null ? Number(body.priority) : null;
   if (priority == null) {
     const siblings = await db.query.subjectStudents.findMany({
@@ -92,7 +126,14 @@ export async function POST(req: NextRequest) {
     priority = maxP + 1;
     if (siblings.length === 0) priority = 1;
   }
-  const [created] = await db.insert(schema.subjectStudents).values({ subjectId, studentId, durationMin, priority, slotsRequired }).returning();
+  const [created] = await db.insert(schema.subjectStudents).values({
+    subjectId,
+    studentId,
+    durationMin,
+    priority,
+    slotsRequired,
+    sessionParts,
+  }).returning();
   return Response.json(created, { status: 201 });
 }
 
@@ -145,8 +186,20 @@ export async function PUT(req: NextRequest) {
   }
 
   const patch: Record<string, unknown> = {};
-  if (body.durationMin !== undefined) patch.durationMin = body.durationMin == null ? null : Number(body.durationMin);
+  if (body.durationMin !== undefined) {
+    if (body.durationMin == null || body.durationMin === "") {
+      patch.durationMin = null;
+    } else {
+      const durationMin = Number(body.durationMin);
+      const dErr = durationMinError(durationMin);
+      if (dErr) return apiError(dErr);
+      patch.durationMin = durationMin;
+    }
+  }
   if (body.slotsRequired !== undefined) patch.slotsRequired = Number(body.slotsRequired);
+  if (body.sessionParts !== undefined) {
+    patch.sessionParts = clampSessionParts(body.sessionParts);
+  }
 
   if (body.priority !== undefined) {
     const newP = Number(body.priority);
@@ -165,6 +218,19 @@ export async function PUT(req: NextRequest) {
       }
     }
     return Response.json({ ok: true });
+  }
+
+  if (patch.durationMin !== undefined || patch.sessionParts !== undefined) {
+    const row = await db.query.subjectStudents.findFirst({ where: eq(schema.subjectStudents.id, id) });
+    if (!row) return apiError("No encontrado", 404);
+    const subject = await db.query.subjects.findFirst({ where: eq(schema.subjects.id, row.subjectId) });
+    const nextDuration =
+      patch.durationMin !== undefined ? (patch.durationMin as number | null) : row.durationMin;
+    const total = nextDuration ?? subject?.defaultDurationMin ?? 60;
+    const nextParts =
+      patch.sessionParts !== undefined ? (patch.sessionParts as number) : Math.max(1, row.sessionParts ?? 1);
+    const partsErr = sessionPartsError(total, nextParts);
+    if (partsErr) return apiError(partsErr);
   }
 
   const [updated] = await db.update(schema.subjectStudents).set(patch).where(eq(schema.subjectStudents.id, id)).returning();

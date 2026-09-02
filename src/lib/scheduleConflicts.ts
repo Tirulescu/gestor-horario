@@ -1,6 +1,6 @@
 import { db, schema } from "@/db";
-import { and, eq, inArray } from "drizzle-orm";
-import { normalizeRanges, slotOverlapsBlocked, slotWithinAvailable } from "@/lib/studentAvailability";
+import { eq, inArray } from "drizzle-orm";
+import { normalizeRanges, slotOverlapsBlocked } from "@/lib/studentAvailability";
 
 function overlaps(
   dayA: number,
@@ -64,22 +64,13 @@ export async function validateAssignmentSlot(params: {
     }
   }
 
-  const avails = await db.query.availabilities.findMany({
-    where: eq(schema.availabilities.teacherId, teacherId),
-    columns: { dayOfWeek: true, startHour: true, endHour: true },
-  });
-  const inAvailability = avails.some(
-    (a) => a.dayOfWeek === dayOfWeek && a.startHour <= startHour && a.endHour >= endHour,
-  );
-  if (!inAvailability) {
-    return "Fuera de la disponibilidad del profesor";
-  }
-
+  // Las clases manuales pueden estar fuera de disponibilidad (profesor y alumno).
+  // Disponibilidad solo limita solicitudes y auto-agendado.
   if (studentIds.length === 0) return null;
 
   const students = await db.query.students.findMany({
     where: inArray(schema.students.id, studentIds),
-    columns: { id: true, blockedRanges: true, availableRanges: true },
+    columns: { id: true, blockedRanges: true },
   });
 
   const studentAssignments = await db.query.assignments.findMany({
@@ -99,12 +90,8 @@ export async function validateAssignmentSlot(params: {
     if (!st) return "Alumno no encontrado";
 
     const blocked = normalizeRanges(st.blockedRanges);
-    const available = normalizeRanges(st.availableRanges);
     if (slotOverlapsBlocked(dayOfWeek, startHour, endHour, blocked)) {
       return "Ese horario choca con una hora bloqueada del alumno";
-    }
-    if (!slotWithinAvailable(dayOfWeek, startHour, endHour, available)) {
-      return "Fuera del horario disponible del alumno";
     }
 
     for (const a of studentAssignments) {

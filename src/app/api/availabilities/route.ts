@@ -79,6 +79,10 @@ export async function PATCH(req: NextRequest) {
   if (dErr) return apiError(dErr);
   const hErr = validateHourRange(startHour, endHour);
   if (hErr) return apiError(hErr);
-  const [updated] = await db.update(schema.availabilities).set({ dayOfWeek, startHour, endHour }).where(eq(schema.availabilities.id, id)).returning();
+  const [updated] = await db
+    .update(schema.availabilities)
+    .set({ dayOfWeek, startHour, endHour })
+    .where(eq(schema.availabilities.id, id))
+    .returning();
   return Response.json(updated);
 }

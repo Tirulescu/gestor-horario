@@ -1,6 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
+import { useState } from "react";
 import { CalendarClock } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,8 +34,10 @@ function GoogleIcon() {
 export default function LoginForm() {
   const searchParams = useSearchParams();
   const authError = searchParams.get("error") === "auth";
+  const [signingIn, setSigningIn] = useState(false);
 
   async function signInWithGoogle() {
+    setSigningIn(true);
     const supabase = createClient();
     const next = searchParams.get("next") ?? "/";
     const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
@@ -44,7 +47,10 @@ export default function LoginForm() {
       options: { redirectTo },
     });
 
-    if (error) console.error("Error al iniciar sesión:", error.message);
+    if (error) {
+      console.error("Error al iniciar sesión:", error.message);
+      setSigningIn(false);
+    }
   }
 
   return (
@@ -69,6 +75,7 @@ export default function LoginForm() {
           variant="outline"
           className="w-full min-h-[48px] gap-3 text-base font-medium"
           onClick={signInWithGoogle}
+          loading={signingIn}
         >
           <GoogleIcon />
           Continuar con Google

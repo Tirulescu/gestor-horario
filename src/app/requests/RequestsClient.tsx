@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  ArrowUp, ArrowDown, Trash2, Plus, Save, Inbox, X, BookOpen, Pencil, ChevronRight,
+  Plus, Save, Inbox, X, BookOpen, ChevronRight,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -19,153 +19,19 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { AnimatePresence, Reorder, useDragControls } from "motion/react";
-import { DragHandle } from "@/components/DragHandle";
+import { AnimatePresence, Reorder } from "motion/react";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import { ChipGroupSkeleton, MemberCardSkeleton } from "@/components/skeletons";
 import { warmData, put, invalidate } from "@/lib/clientCache";
 import { DAYS } from "@/lib/validate";
-import { fmtHour, fmtRange, hourOptions, endHourFromDuration, fmtDurationMin, resolveMemberDurationMin, fmtSubjectDurationOptions } from "@/lib/hours";
+import { fmtRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, fmtDurationMin, resolveMemberDurationMin, fmtSubjectDurationOptions, slotDurationMin } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
-import { getSlotHourSets, normalizeRanges, snapSlotHours, validateSlotRequest, type TimeRange } from "@/lib/studentAvailability";
-import { COPY } from "@/lib/copy";
+import { normalizeRanges, snapSlotHours, validateSlotRequest } from "@/lib/studentAvailability";
 
-interface Subject {
-  id: number; name: string; teacherId: number; defaultDurationMin: number; isCollective?: boolean;
-  subjectStudents?: { id: number; durationMin: number | null }[];
-  subjectGradeDurations?: { id: number; durationMin: number }[];
-}
-interface SubjectStudent {
-  id: number; subjectId: number; studentId: number;
-  durationMin: number | null; priority: number; slotsRequired: number;
-  student: { id: number; name: string };
-}
-interface SlotRequest {
-  id: number; studentId: number; subjectId: number;
-  dayOfWeek: number; startHour: number; endHour: number;
-  prefOrder: number; status: string;
-}
-interface Availability { id: number; dayOfWeek: number; startHour: number; endHour: number; }
-interface Student { id: number; name: string; availableRanges?: TimeRange[]; blockedRanges?: TimeRange[]; }
-
-type ConfirmTarget =
-  | { kind: "slot"; id: number; label: string }
-  | null;
-
-function SlotRow({ r, ri, total, busy, moveSlot, openEdit, setConfirmTarget, m }: {
-  r: SlotRequest; ri: number; total: number; busy: boolean;
-  moveSlot: (id: number, dir: "up" | "down") => void;
-  openEdit: (r: SlotRequest) => void;
-  setConfirmTarget: (t: { kind: "slot"; id: number; label: string }) => void;
-  m: SubjectStudent;
-}) {
-  const controls = useDragControls();
-  return (
-    <Reorder.Item
-      value={r}
-      layout
-      dragListener={false}
-      dragControls={controls}
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, x: -8 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-      whileDrag={{ scale: 1.02, boxShadow: "0 8px 24px rgb(0 0 0 / 0.12)", zIndex: 20 }}
-      className="flex items-center gap-2 text-sm bg-gray-50 rounded-lg px-2 py-2"
-    >
-      <DragHandle controls={controls} size={14} />
-      <div className="flex items-center gap-0.5 shrink-0">
-        <Button size="iconSm" variant="ghost" onClick={() => moveSlot(r.id, "up")} disabled={busy || ri === 0} aria-label="Subir preferencia"><ArrowUp size={12} /></Button>
-        <Button size="iconSm" variant="ghost" onClick={() => moveSlot(r.id, "down")} disabled={busy || ri === total - 1} aria-label="Bajar preferencia"><ArrowDown size={12} /></Button>
-      </div>
-      <span className="min-w-0 flex-1 text-sm leading-snug tabular-nums">
-        <span className="font-medium text-gray-900">{DAYS[r.dayOfWeek]}</span>
-        {" "}
-        <span className="text-gray-600 whitespace-nowrap">{fmtRange(r.startHour, r.endHour)}</span>
-      </span>
-      <div className="flex items-center gap-1 shrink-0 ml-auto">
-        <Button size="iconSm" variant="outline" onClick={() => openEdit(r)} aria-label="Editar solicitud"><Pencil size={12} /></Button>
-        <Button size="iconSm" variant="destructive" onClick={() => setConfirmTarget({ kind: "slot", id: r.id, label: `¿Borrar ${DAYS[r.dayOfWeek]} ${fmtRange(r.startHour, r.endHour)} de ${m.student.name}?` })} aria-label="Borrar"><Trash2 size={12} /></Button>
-      </div>
-    </Reorder.Item>
-  );
-}
-
-function MemberCard({ m, mi, total, reqs, busy, moveMember, moveSlot, handleReorder, openAdd, openEdit, setConfirmTarget }: {
-  m: SubjectStudent; mi: number; total: number; reqs: SlotRequest[];
-  busy: boolean; moveMember: (id: number, dir: "up" | "down") => void;
-  moveSlot: (id: number, dir: "up" | "down") => void;
-  handleReorder: (next: SlotRequest[], studentId: number, subjectId: number) => void;
-  openAdd: (studentId: number) => void; openEdit: (r: SlotRequest) => void;
-  setConfirmTarget: (t: { kind: "slot"; id: number; label: string }) => void;
-}) {
-  const controls = useDragControls();
-  const fulfilled = reqs.length >= m.slotsRequired;
-  return (
-    <Reorder.Item
-      value={m}
-      layout
-      dragListener={false}
-      dragControls={controls}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.98 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-      whileDrag={{ scale: 1.01, boxShadow: "0 12px 32px rgb(0 0 0 / 0.14)", zIndex: 20 }}
-    >
-      <Card className="p-4 space-y-3">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
-            <DragHandle controls={controls} />
-            <div className="inline-flex items-center gap-1">
-              <Button size="iconSm" variant="ghost" onClick={() => moveMember(m.id, "up")} disabled={busy || mi === 0} aria-label="Subir prioridad"><ArrowUp size={14} /></Button>
-              <Button size="iconSm" variant="ghost" onClick={() => moveMember(m.id, "down")} disabled={busy || mi === total - 1} aria-label="Bajar prioridad"><ArrowDown size={14} /></Button>
-            </div>
-            <span className="font-semibold text-gray-900">{m.student.name}</span>
-            <Badge variant={fulfilled ? "success" : "warn"}>
-              {COPY.slotsProgress(reqs.length, m.slotsRequired)}
-            </Badge>
-            {m.durationMin != null && <Badge variant="gray">{m.durationMin} min</Badge>}
-          </div>
-          <Button size="sm" variant="outline" className="w-full sm:w-auto shrink-0" onClick={() => openAdd(m.studentId)}>
-            <Plus size={14} /> <span className="sm:hidden">Añadir</span><span className="hidden sm:inline">Añadir solicitud</span>
-          </Button>
-        </div>
-        <Separator />
-        {reqs.length === 0 ? (
-          <p className="text-sm text-gray-400">Sin solicitudes de horario</p>
-        ) : (
-          <Reorder.Group
-            axis="y"
-            values={reqs}
-            onReorder={(next) => handleReorder(next, m.studentId, m.subjectId)}
-            layoutScroll
-            className="space-y-1.5 reorder-group"
-          >
-            <AnimatePresence initial={false}>
-              {reqs.map((r, ri) => (
-                <SlotRow
-                  key={r.id}
-                  r={r}
-                  ri={ri}
-                  total={reqs.length}
-                  busy={busy}
-                  moveSlot={moveSlot}
-                  openEdit={openEdit}
-                  setConfirmTarget={setConfirmTarget}
-                  m={m}
-                />
-              ))}
-            </AnimatePresence>
-          </Reorder.Group>
-        )}
-      </Card>
-    </Reorder.Item>
-  );
-}
+import type { Subject, SubjectStudent, SlotRequest, Availability, Student, ConfirmTarget } from "./types";
+import { hourSetsForStudent as computeHourSets, pickEndForStart, resolveStartForDay, endOptions } from "./slotHourHelpers";
+import { MemberCard } from "./MemberCard";
 
 function hydrateSubjectData(subjectId: number) {
   const cSS = warmData<SubjectStudent[]>("/api/subject_students");
@@ -192,6 +58,8 @@ export default function RequestsClient() {
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [loadingSubject, setLoadingSubject] = useState(false);
   const [loadingSubjects, setLoadingSubjects] = useState(true);
 
@@ -210,8 +78,8 @@ export default function RequestsClient() {
   const [editName, setEditName] = useState<string | null>(null);
   const [editEnd, setEditEnd] = useState("");
 
-  const HOURS_START = hourOptions(8, 23);
-  const HOURS_END = hourOptions(9, 24);
+  const HOURS_START = SCHEDULE_HOURS_START;
+  const HOURS_END = SCHEDULE_HOURS_END;
 
   function studentFor(id: number | null): Student | undefined {
     if (id == null) return undefined;
@@ -219,12 +87,10 @@ export default function RequestsClient() {
   }
 
   function hourSetsForStudent(day: number, studentId: number | null, selectedStart?: string, durationMin?: number) {
-    const st = studentFor(studentId);
-    return getSlotHourSets(
+    return computeHourSets(
       day,
+      studentFor(studentId),
       availabilities,
-      normalizeRanges(st?.availableRanges),
-      normalizeRanges(st?.blockedRanges),
       HOURS_START,
       HOURS_END,
       selectedStart,
@@ -439,8 +305,10 @@ export default function RequestsClient() {
   }
 
   async function deleteSlot() {
-    if (!confirmTarget || confirmTarget.kind !== "slot") return;
+    if (!confirmTarget || confirmTarget.kind !== "slot" || deleting) return;
+    setDeleting(true);
     const res = await fetch(`/api/slot_requests?id=${confirmTarget.id}`, { method: "DELETE" });
+    setDeleting(false);
     setConfirmTarget(null);
     if (!res.ok) return toast("error", "No se pudo borrar");
     invalidate("/api/slot_requests"); toast("success", "Solicitud borrada");
@@ -491,53 +359,36 @@ export default function RequestsClient() {
     if (snapped.end !== editEnd) setEditEnd(snapped.end);
   }, [editOpen, editStudentId, editDay, availabilities, allStudents, editRequiredDuration]);
 
-  useEffect(() => {
-    if (!addOpen || addRequiredDuration == null || addStart === "") return;
-    const end = String(endHourFromDuration(Number(addStart), addRequiredDuration));
-    if (end !== addEnd) setAddEnd(end);
-  }, [addOpen, addStart, addRequiredDuration]);
-
-  useEffect(() => {
-    if (!editOpen || editRequiredDuration == null || editStart === "") return;
-    const end = String(endHourFromDuration(Number(editStart), editRequiredDuration));
-    if (end !== editEnd) setEditEnd(end);
-  }, [editOpen, editStart, editRequiredDuration]);
+  function pickEnd(day: number, studentId: number | null, start: string, preferredEnd: string, maxDuration: number | null): string {
+    const { endSet } = hourSetsForStudent(day, studentId, start, maxDuration ?? undefined);
+    return pickEndForStart(endSet, start, preferredEnd, maxDuration);
+  }
 
   function changeAddDay(v: string) {
-    setAddDay(Number(v));
-    const { startSet } = hourSetsForStudent(Number(v), addStudentId, addStart, addRequiredDuration ?? undefined);
-    if (!startSet.has(addStart) && startSet.size > 0) {
-      const newStart = Array.from(startSet)[0];
-      setAddStart(newStart);
-      if (addRequiredDuration != null) {
-        setAddEnd(String(endHourFromDuration(Number(newStart), addRequiredDuration)));
-      }
-    }
+    const day = Number(v);
+    setAddDay(day);
+    const { startSet } = hourSetsForStudent(day, addStudentId, addStart, addRequiredDuration ?? undefined);
+    const newStart = resolveStartForDay(startSet, addStart);
+    if (newStart !== addStart) setAddStart(newStart);
+    if (newStart) setAddEnd(pickEnd(day, addStudentId, newStart, addEnd, addRequiredDuration));
   }
   function changeEditDay(v: string) {
-    setEditDay(Number(v));
-    const { startSet } = hourSetsForStudent(Number(v), editStudentId, editStart, editRequiredDuration ?? undefined);
-    if (!startSet.has(editStart) && startSet.size > 0) {
-      const newStart = Array.from(startSet)[0];
-      setEditStart(newStart);
-      if (editRequiredDuration != null) {
-        setEditEnd(String(endHourFromDuration(Number(newStart), editRequiredDuration)));
-      }
-    }
+    const day = Number(v);
+    setEditDay(day);
+    const { startSet } = hourSetsForStudent(day, editStudentId, editStart, editRequiredDuration ?? undefined);
+    const newStart = resolveStartForDay(startSet, editStart);
+    if (newStart !== editStart) setEditStart(newStart);
+    if (newStart) setEditEnd(pickEnd(day, editStudentId, newStart, editEnd, editRequiredDuration));
   }
 
   function changeAddStart(v: string) {
     setAddStart(v);
-    if (addRequiredDuration != null) {
-      setAddEnd(String(endHourFromDuration(Number(v), addRequiredDuration)));
-    }
+    setAddEnd(pickEnd(Number(addDay), addStudentId, v, addEnd, addRequiredDuration));
   }
 
   function changeEditStart(v: string) {
     setEditStart(v);
-    if (editRequiredDuration != null) {
-      setEditEnd(String(endHourFromDuration(Number(v), editRequiredDuration)));
-    }
+    setEditEnd(pickEnd(Number(editDay), editStudentId, v, editEnd, editRequiredDuration));
   }
 
   function addIssue(): string {
@@ -556,9 +407,11 @@ export default function RequestsClient() {
   const addErr = addIssue();
 
   async function submitAdd() {
+    if (saving) return;
     if (!addStudentId) return toast("error", "Selecciona un alumno");
     if (addErr) return toast("error", addErr);
     if (!activeSubjectId) return;
+    setSaving(true);
     const res = await fetch("/api/slot_requests", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -570,6 +423,7 @@ export default function RequestsClient() {
         endHour: Number(addEnd),
       }),
     });
+    setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     invalidate("/api/slot_requests"); toast("success", "Solicitud añadida");
     setAddOpen(false);
@@ -586,7 +440,7 @@ export default function RequestsClient() {
   }
 
   async function saveEdit() {
-    if (editId == null) return;
+    if (editId == null || saving) return;
     const row = slotRequests.find((x) => x.id === editId);
     const st = row ? studentFor(row.studentId) : undefined;
     const day = Number(editDay);
@@ -610,11 +464,13 @@ export default function RequestsClient() {
       setEditOpen(false);
       return;
     }
+    setSaving(true);
     const res = await fetch("/api/slot_requests", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
     invalidate("/api/slot_requests"); toast("success", "Solicitud actualizada");
     setEditOpen(false);
@@ -755,11 +611,12 @@ export default function RequestsClient() {
           <div className="space-y-3">
             {addRequiredDuration != null && (
               <p className="text-sm text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-                Duración de la clase: <strong>{fmtDurationMin(addRequiredDuration)}</strong>
-                {activeSubject?.isCollective ? " (sesión colectiva)" : ""}
+                Total a cubrir: <strong>{fmtDurationMin(addRequiredDuration)}</strong>
+                {activeSubject?.isCollective ? " (sesión colectiva)" : ""}.
+                {" "}Puedes dividirla (p. ej. 2×30 min) con varias solicitudes.
               </p>
             )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label htmlFor="a-day">Día</Label>
                 <Select value={String(addDay)} onValueChange={changeAddDay}>
@@ -778,10 +635,23 @@ export default function RequestsClient() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label htmlFor="a-end">Hora de fin</Label>
+                <Select value={addEnd} onValueChange={setAddEnd} disabled={addHourSets.endSet.size === 0}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
+                  <SelectContent>
+                    {endOptions(addHourSets.endSet).map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             {addStart !== "" && addEnd !== "" && (
               <p className="text-sm text-gray-600">
                 Franja: <strong>{DAYS[addDay]} {fmtRange(addStart, addEnd)}</strong>
+                {" · "}
+                <strong>{fmtDurationMin(slotDurationMin(Number(addStart), Number(addEnd)))}</strong>
               </p>
             )}
             
@@ -794,8 +664,8 @@ export default function RequestsClient() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}><X size={14} /> Cancelar</Button>
-            <Button onClick={submitAdd}><Save size={14} /> Añadir</Button>
+            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={saving}><X size={14} /> Cancelar</Button>
+            <Button onClick={submitAdd} loading={saving}><Save size={14} /> Añadir</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -810,15 +680,16 @@ export default function RequestsClient() {
           <div className="space-y-3">
             {editRequiredDuration != null && (
               <p className="text-sm text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-                Duración de la clase: <strong>{fmtDurationMin(editRequiredDuration)}</strong>
-                {activeSubject?.isCollective ? " (sesión colectiva)" : ""}
+                Total a cubrir: <strong>{fmtDurationMin(editRequiredDuration)}</strong>
+                {activeSubject?.isCollective ? " (sesión colectiva)" : ""}.
+                {" "}Puedes usar una franja más corta y completar con otra solicitud.
               </p>
             )}
             <div className="sm:col-span-3">
               <Label htmlFor="e-alumno">Alumno</Label>
               <Input value={editName ?? ""} readOnly />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label htmlFor="e-day">Día</Label>
                 <Select value={String(editDay)} onValueChange={changeEditDay}>
@@ -837,30 +708,51 @@ export default function RequestsClient() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label htmlFor="e-end">Hora de fin</Label>
+                <Select value={editEnd} onValueChange={setEditEnd} disabled={editHourSets.endSet.size === 0}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
+                  <SelectContent>
+                    {endOptions(editHourSets.endSet).map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             {editStart !== "" && editEnd !== "" && (
               <p className="text-sm text-gray-600">
                 Franja: <strong>{DAYS[editDay]} {fmtRange(editStart, editEnd)}</strong>
+                {" · "}
+                <strong>{fmtDurationMin(slotDurationMin(Number(editStart), Number(editEnd)))}</strong>
               </p>
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)}><X size={14} /> Cancelar</Button>
-            <Button onClick={saveEdit}><Save size={14} /> Guardar</Button>
+            <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}><X size={14} /> Cancelar</Button>
+            <Button onClick={saveEdit} loading={saving}><Save size={14} /> Guardar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* AlertDialog confirmar borrado */}
-      <AlertDialog open={confirmTarget !== null} onOpenChange={(o) => { if (!o) setConfirmTarget(null); }}>
+      <AlertDialog open={confirmTarget !== null} onOpenChange={(o) => { if (!o && !deleting) setConfirmTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar borrado</AlertDialogTitle>
             <AlertDialogDescription>{confirmTarget?.label}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={deleteSlot}>Borrar</AlertDialogAction>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              loading={deleting}
+              onClick={(e) => {
+                e.preventDefault();
+                void deleteSlot();
+              }}
+            >
+              Borrar
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

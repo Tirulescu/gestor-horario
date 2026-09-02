@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { db, schema } from "@/db";
 import { eq } from "drizzle-orm";
 import { apiError, safeJson } from "@/lib/validate";
+import { durationMinError } from "@/lib/hours";
 import { requireTeacher, assertOwnTeacher, assertSubjectOwned } from "@/lib/auth/requireTeacher";
 
 export async function GET(req: NextRequest) {
@@ -34,7 +35,8 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
 
   const defaultDurationMin = Number(body.defaultDurationMin ?? 60);
-  if (!Number.isInteger(defaultDurationMin) || defaultDurationMin < 1) return apiError("defaultDurationMin inválido");
+  const dErr = durationMinError(defaultDurationMin);
+  if (dErr) return apiError(dErr);
   const isCollective = Boolean(body.isCollective);
   const [created] = await db.insert(schema.subjects).values({ name, teacherId, defaultDurationMin, isCollective }).returning();
   return Response.json(created, { status: 201 });
@@ -57,7 +59,8 @@ export async function PUT(req: NextRequest) {
   if (deniedTeacher) return deniedTeacher;
 
   const defaultDurationMin = Number(body.defaultDurationMin ?? 60);
-  if (!Number.isInteger(defaultDurationMin) || defaultDurationMin < 1) return apiError("defaultDurationMin inválido");
+  const dErr = durationMinError(defaultDurationMin);
+  if (dErr) return apiError(dErr);
   const isCollective = body.isCollective !== undefined ? Boolean(body.isCollective) : undefined;
   const [updated] = await db
     .update(schema.subjects)
