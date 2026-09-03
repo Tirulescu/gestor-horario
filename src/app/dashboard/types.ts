@@ -1,7 +1,8 @@
 import type { TimeRange } from "@/lib/studentAvailability";
 import { SCHEDULE_HOURS_START, SCHEDULE_HOURS_END } from "@/lib/hours";
+import { SUBJECT_COLOR_PRESETS } from "@/lib/subjectColors";
 
-export const COLORS = ["#2563eb", "#1d4ed8", "#0891b2", "#4f46e5", "#0284c7", "#7c3aed", "#0e7490", "#4338ca"];
+export const COLORS = [...SUBJECT_COLOR_PRESETS];
 export const HOURS_START = SCHEDULE_HOURS_START;
 export const HOURS_END = SCHEDULE_HOURS_END;
 

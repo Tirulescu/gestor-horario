@@ -8,6 +8,10 @@ import {
   normalizeRanges,
 } from "@/lib/studentAvailability";
 import {
+  normalizeStudentColor,
+  studentColorError,
+} from "@/lib/studentColors";
+import {
   requireTeacher,
   assertOwnTeacher,
   assertStudentAccessible,
@@ -46,8 +50,18 @@ export async function POST(req: NextRequest) {
   if (!name) return apiError("Nombre requerido");
   const email = body.email ? String(body.email) : null;
   const grade = body.grade != null && String(body.grade).trim() !== "" ? String(body.grade).trim() : null;
+  if (body.color !== undefined) {
+    const cErr = studentColorError(body.color);
+    if (cErr) return apiError(cErr);
+  }
+  const color = body.color !== undefined ? normalizeStudentColor(body.color) : undefined;
   const created = await db.transaction(async (tx) => {
-    const [student] = await tx.insert(schema.students).values({ name, email, grade }).returning();
+    const [student] = await tx.insert(schema.students).values({
+      name,
+      email,
+      grade,
+      ...(color !== undefined ? { color } : {}),
+    }).returning();
     await tx
       .insert(schema.teacherStudents)
       .values({ teacherId: auth.teacher.id, studentId: student.id });
@@ -76,6 +90,11 @@ export async function PUT(req: NextRequest) {
     : undefined;
   const patch: Record<string, unknown> = { name, email };
   if (grade !== undefined) patch.grade = grade;
+  if (body.color !== undefined) {
+    const cErr = studentColorError(body.color);
+    if (cErr) return apiError(cErr);
+    patch.color = normalizeStudentColor(body.color);
+  }
 
   const current =
     body.blockedRanges !== undefined || body.availableRanges !== undefined

@@ -1,17 +1,17 @@
-/** Paleta de colores preseleccionados para asignaturas. */
+/** Paleta pastel complementaria (12 tonos distintos alrededor del círculo cromático). */
 export const SUBJECT_COLOR_PRESETS = [
-  "#2563eb",
-  "#1d4ed8",
-  "#0891b2",
-  "#4f46e5",
-  "#0284c7",
-  "#7c3aed",
-  "#0e7490",
-  "#4338ca",
-  "#dc2626",
-  "#16a34a",
-  "#d97706",
-  "#db2777",
+  "#e07a8a", // rosa coral
+  "#e0986a", // albaricoque
+  "#d4b45c", // mostaza suave
+  "#9bc86e", // lima pastel
+  "#6cc49a", // menta
+  "#5cbcb4", // agua
+  "#6aade0", // cielo
+  "#7b94e0", // periwinkle
+  "#9b7ce0", // lavanda
+  "#c87ad4", // orquídea
+  "#e07ab8", // fucsia suave
+  "#c4a078", // arena
 ] as const;
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;

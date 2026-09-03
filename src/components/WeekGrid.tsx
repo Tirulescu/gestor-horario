@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronUp, Maximize2, Minimize2 } from "lucide-react";
 import { DAYS } from "@/lib/validate";
-import { fmtHour, fmtDayRange } from "@/lib/hours";
+import { computeVisibleScheduleRange, fmtHour, fmtDayRange } from "@/lib/hours";
 import CalendarEventDetailDialog, { type CalendarEventDetailRow } from "@/components/CalendarEventDetailDialog";
 
 const MIN_FIT_HOUR_HEIGHT = 10;
@@ -33,20 +33,6 @@ function zoneHours(zones?: Record<number, { start: number; end: number }[]>): nu
     for (const r of ranges) out.push(r.start, r.end);
   }
   return out;
-}
-
-function computeFullRange(
-  startH: number,
-  endH: number,
-  contentHours: number[],
-): { lo: number; hi: number } {
-  let lo = startH;
-  let hi = endH;
-  if (contentHours.length > 0) {
-    lo = Math.min(lo, Math.floor(Math.min(...contentHours)));
-    hi = Math.max(hi, Math.ceil(Math.max(...contentHours)));
-  }
-  return { lo, hi };
 }
 
 export interface WeekBlock {
@@ -200,15 +186,15 @@ export default function WeekGrid({
 
   const totalHoursRef = useRef(0);
 
+  // No incluir `unavailable`: suele rellenar 7–23 y forzar el rango completo.
   const contentHours = useMemo(() => {
     const hours = [
       ...blocks.flatMap((b) => [b.startHour, b.endHour]),
-      ...zoneHours(unavailable),
       ...zoneHours(availableZones),
       ...zoneHours(blockedZones),
     ];
     return hours.filter((h) => Number.isFinite(h));
-  }, [blocks, unavailable, availableZones, blockedZones]);
+  }, [blocks, availableZones, blockedZones]);
 
   const visibleDays = useMemo(
     () => hideWeekends ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5, 6],
@@ -223,7 +209,7 @@ export default function WeekGrid({
   }, []);
 
   const { lo, hi } = useMemo(
-    () => computeFullRange(startH, endH, contentHours),
+    () => computeVisibleScheduleRange(contentHours, startH, endH),
     [startH, endH, contentHours],
   );
   const totalHours = hi - lo;

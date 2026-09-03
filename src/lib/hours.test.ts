@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeVisibleScheduleRange,
   durationPartOptions,
   endHourFromDuration,
   endIfAfterStart,
+  SCHEDULE_DAY_END,
+  SCHEDULE_DAY_START,
   SCHEDULE_HOURS_END,
   SCHEDULE_HOURS_START,
 } from "./hours";
@@ -40,5 +43,29 @@ describe("partes de duración", () => {
     expect(durationPartOptions(60)).toEqual([30, 60]);
     expect(endHourFromDuration(16, 30)).toBe(16.5);
     expect(endHourFromDuration(16, 60)).toBe(17);
+  });
+});
+
+describe("computeVisibleScheduleRange", () => {
+  it("sin contenido usa el fallback 7–23", () => {
+    expect(computeVisibleScheduleRange([])).toEqual({
+      lo: SCHEDULE_DAY_START,
+      hi: SCHEDULE_DAY_END,
+    });
+  });
+
+  it("ajusta al contenido con margen de 1 h", () => {
+    expect(computeVisibleScheduleRange([16, 20])).toEqual({ lo: 15, hi: 21 });
+    expect(computeVisibleScheduleRange([16.5, 17])).toEqual({ lo: 15, hi: 18 });
+  });
+
+  it("no baja de 7 ni sube de 23 si el contenido está dentro", () => {
+    expect(computeVisibleScheduleRange([7.5, 9])).toEqual({ lo: 7, hi: 10 });
+    expect(computeVisibleScheduleRange([21, 22.5])).toEqual({ lo: 20, hi: 23 });
+  });
+
+  it("permite salirse del fallback si el contenido lo exige", () => {
+    expect(computeVisibleScheduleRange([6, 8])).toEqual({ lo: 5, hi: 9 });
+    expect(computeVisibleScheduleRange([22, 24])).toEqual({ lo: 21, hi: 24 });
   });
 });

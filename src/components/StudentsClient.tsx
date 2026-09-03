@@ -26,7 +26,9 @@ import { DAYS } from "@/lib/validate";
 import StudentScheduleViewDialog from "@/components/StudentScheduleViewDialog";
 import StudentScheduleManageDialog from "@/components/StudentScheduleManageDialog";
 import StudentsCalendarDialog from "@/components/StudentsCalendarDialog";
+import SubjectColorPicker from "@/components/SubjectColorPicker";
 import { carveAvailabilityAroundBlocked, isExternalClass, type TimeRange } from "@/lib/studentAvailability";
+import { STUDENT_COLOR_PRESETS, buildStudentColorMap, resolveStudentColor } from "@/lib/studentColors";
 
 interface Subject { id: number; name: string; defaultDurationMin: number; isCollective?: boolean; }
 interface Student {
@@ -34,6 +36,7 @@ interface Student {
   name: string;
   email?: string | null;
   grade?: string | null;
+  color?: string | null;
   blockedRanges?: TimeRange[];
   availableRanges?: TimeRange[];
 }
@@ -91,6 +94,7 @@ export default function StudentsClient() {
   const [fName, setFName] = useState("");
   const [fGrade, setFGrade] = useState("");
   const [fEmail, setFEmail] = useState("");
+  const [fColor, setFColor] = useState<string>(STUDENT_COLOR_PRESETS[0]);
   const [selSubjects, setSelSubjects] = useState<Set<number>>(new Set());
   const [initialSubjects, setInitialSubjects] = useState<Set<number>>(new Set());
   const [editRemoveAvail, setEditRemoveAvail] = useState<Set<number>>(new Set());
@@ -111,7 +115,6 @@ export default function StudentsClient() {
   const [manageOpen, setManageOpen] = useState(false);
   const [manageStudentId, setManageStudentId] = useState<number | null>(null);
   const [allBlocksOpen, setAllBlocksOpen] = useState(false);
-  const [calendarInitialView, setCalendarInitialView] = useState<"blocks" | "events">("blocks");
   const [calEditId, setCalEditId] = useState<number | null>(null);
   const [calDeleteId, setCalDeleteId] = useState<number | null>(null);
   const [calDeleting, setCalDeleting] = useState(false);
@@ -210,6 +213,11 @@ export default function StudentsClient() {
     [students]
   );
 
+  const studentColorById = useMemo(
+    () => buildStudentColorMap(students ?? []),
+    [students],
+  );
+
   const filteredStudents = useMemo(() => {
     const list = students ?? [];
     const q = searchQuery.trim().toLowerCase();
@@ -224,6 +232,7 @@ export default function StudentsClient() {
   function openNew() {
     setEditing(null);
     setFName(""); setFGrade(""); setFEmail("");
+    setFColor(STUDENT_COLOR_PRESETS[0]);
     setSelSubjects(new Set());
     setInitialSubjects(new Set());
     setEditRemoveAvail(new Set());
@@ -241,6 +250,8 @@ export default function StudentsClient() {
   function openEdit(s: Student) {
     setEditing(s);
     setFName(s.name); setFGrade(s.grade ?? ""); setFEmail(s.email ?? "");
+    const colorIdx = Math.max(0, (students ?? []).findIndex((x) => x.id === s.id));
+    setFColor(resolveStudentColor(s, colorIdx));
     const subs = new Set(
       subjectLinks.filter((r) => r.studentId === s.id).map((r) => r.subjectId),
     );
@@ -472,11 +483,18 @@ export default function StudentsClient() {
     const noAvailEdits = Object.keys(editAvailEdits).length === 0;
     const noBlockedEdits = Object.keys(editBlockedEdits).length === 0;
     const noEventEdits = Object.keys(editEventEdits).length === 0;
+    const editingColor = editing
+      ? resolveStudentColor(
+          editing,
+          Math.max(0, (students ?? []).findIndex((x) => x.id === editing.id)),
+        )
+      : STUDENT_COLOR_PRESETS[0];
     if (
       editing &&
       fName.trim() === editing.name &&
       fGrade.trim() === (editing.grade ?? "") &&
       fEmail.trim() === (editing.email ?? "") &&
+      fColor === editingColor &&
       subjectsEqual(selSubjects, initialSubjects) &&
       noRangeRemovals &&
       noAvailEdits &&
@@ -486,106 +504,7 @@ export default function StudentsClient() {
       setEditOpen(false);
       return;
     }
-    setSaving(true);
-    const payload: Record<string, unknown> = { name: fName.trim(), grade: fGrade.trim(), email: fEmail.trim() };
-    if (editing) payload.id = editing.id;
-    const res = await fetch("/api/students", {
-      method: editing ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      setSaving(false);
-      return toast("error", (await res.json().catch(() => ({}))).error || "Error al guardar los datos del alumno");
-    }
-    const saved: Student = await res.json();
-    const rows = subjectLinks.filter((r) => r.studentId === saved.id);
-    for (const sub of subjects) {
-      const row = rows.find((r) => r.subjectId === sub.id);
-      const want = selSubjects.has(sub.id);
-      if (want && !row) {
-        const linkRes = await fetch("/api/subject_students", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subjectId: sub.id, studentId: saved.id }),
-        });
-        if (!linkRes.ok) {
-          setSaving(false);
-          return toast("error", (await linkRes.json().catch(() => ({}))).error || `No se pudo añadir a ${sub.name}`);
-        }
-      } else if (!want && row) {
-        const delRes = await fetch(`/api/subject_students?id=${row.id}`, { method: "DELETE" });
-        if (!delRes.ok) {
-          setSaving(false);
-          return toast("error", (await delRes.json().catch(() => ({}))).error || `No se pudo quitar de ${sub.name}`);
-        }
-      }
-    }
-    if (editing) {
-      const fresh = (students ?? []).find((x) => x.id === editing.id) ?? editing;
-      const curAvail = fresh.availableRanges ?? [];
-      const curBlocks = fresh.blockedRanges ?? [];
-      const nextAvail: TimeRange[] = [];
-      for (let i = 0; i < curAvail.length; i++) {
-        if (editRemoveAvail.has(i)) continue;
-        nextAvail.push(editAvailEdits[i] ?? curAvail[i]);
-      }
-      const nextBlocks: TimeRange[] = [];
-      for (let i = 0; i < curBlocks.length; i++) {
-        if (editRemoveBlocks.has(i)) continue;
-        nextBlocks.push(editBlockedEdits[i] ?? curBlocks[i]);
-      }
 
-      const availChanged = nextAvail.length !== curAvail.length || editRemoveAvail.size > 0 || Object.keys(editAvailEdits).length > 0 || nextAvail.some((r, i) => {
-        const c = curAvail[i];
-        return !c || c.day !== r.day || c.start !== r.start || c.end !== r.end;
-      });
-      const blocksChanged = nextBlocks.length !== curBlocks.length || nextBlocks.some((r, i) => {
-        const c = curBlocks.filter((_, idx) => !editRemoveBlocks.has(idx))[i];
-        return !c || c.day !== r.day || c.start !== r.start || c.end !== r.end || (c.kind ?? "block") !== (r.kind ?? "block") || (c.title ?? "") !== (r.title ?? "");
-      });
-
-      if (availChanged || blocksChanged) {
-        const ok = await updateStudentRanges(fresh, {
-          availableRanges: availChanged ? nextAvail : undefined,
-          blockedRanges: blocksChanged ? nextBlocks : undefined,
-        } as { availableRanges?: TimeRange[]; blockedRanges?: TimeRange[] });
-        if (!ok) {
-          setSaving(false);
-          return toast("error", "No se pudieron guardar los cambios de disponibilidad u ocupaciones del alumno");
-        }
-      }
-
-      // Borrar clases/ocupaciones por tipo de clase (asignaciones) antes de parchear ediciones.
-      for (const id of editRemoveEvents) {
-        const resDel = await fetch(`/api/assignments?id=${id}`, { method: "DELETE" });
-        if (!resDel.ok) {
-          setSaving(false);
-          return toast("error", "No se pudo eliminar la clase del alumno. Inténtalo de nuevo.");
-        }
-      }
-
-      for (const [k, v] of Object.entries(editEventEdits)) {
-        const id = Number(k);
-        if (!Number.isFinite(id) || editRemoveEvents.has(id)) continue;
-        const resPatch = await fetch("/api/assignments", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id,
-            dayOfWeek: v.dayOfWeek,
-            startHour: v.startHour,
-            endHour: v.endHour,
-          }),
-        });
-        if (!resPatch.ok) {
-          setSaving(false);
-          const d = await resPatch.json().catch(() => ({}));
-          return toast("error", d.error || "No se pudo modificar una clase");
-        }
-      }
-    }
-    // Capturar valores para el toast ANTES de resetear estados
     const _availRemoved = editRemoveAvail.size;
     const _availEditsCount = Object.keys(editAvailEdits).map(Number).filter((i) => !editRemoveAvail.has(i)).length;
     const _blocksRemoved = editRemoveBlocks.size;
@@ -595,36 +514,179 @@ export default function StudentsClient() {
     const _nameChanged = editing ? fName.trim() !== editing.name : false;
     const _gradeChanged = editing ? fGrade.trim() !== (editing.grade ?? "") : false;
     const _emailChanged = editing ? fEmail.trim() !== (editing.email ?? "") : false;
+    const _colorChanged = editing ? fColor !== editingColor : false;
     const _subjectsChanged = !subjectsEqual(selSubjects, initialSubjects);
 
-    setSaving(false);
-    setEditOpen(false);
-    setEditRemoveAvail(new Set());
-    setEditAvailEdits({});
-    setAvailEditIndex(null);
-    setEditRemoveBlocks(new Set());
-    setEditRemoveEvents(new Set());
-    setEditBlockedEdits({});
-    setEditEventEdits({});
-    setBlockedEditIndex(null);
-    setEventEditId(null);
-
+    // Preparar franjas en un solo PUT (evita el doble guardado anterior).
+    let nextAvail: TimeRange[] | undefined;
+    let nextBlocks: TimeRange[] | undefined;
     if (editing) {
-      const parts: string[] = [];
-      if (_nameChanged || _gradeChanged || _emailChanged) parts.push("Datos del alumno actualizados");
-      if (_subjectsChanged) parts.push("Matrícula actualizada");
-      if (_availRemoved > 0) parts.push(_availRemoved === 1 ? "1 franja de disponibilidad quitada" : `${_availRemoved} franjas de disponibilidad quitadas`);
-      if (_availEditsCount > 0) parts.push(_availEditsCount === 1 ? "1 franja de disponibilidad modificada" : `${_availEditsCount} franjas de disponibilidad modificadas`);
-      if (_blocksRemoved > 0) parts.push(_blocksRemoved === 1 ? "1 ocupación quitada" : `${_blocksRemoved} ocupaciones quitadas`);
-      if (_blockedEditsCount > 0) parts.push(_blockedEditsCount === 1 ? "1 ocupación modificada" : `${_blockedEditsCount} ocupaciones modificadas`);
-      if (_eventsRemoved > 0) parts.push(_eventsRemoved === 1 ? "1 clase eliminada" : `${_eventsRemoved} clases eliminadas`);
-      if (_eventsEditsCount > 0) parts.push(_eventsEditsCount === 1 ? "1 clase modificada" : `${_eventsEditsCount} clases modificadas`);
-      toast("success", parts.length === 0 ? "Cambios guardados" : parts.join(" · "));
-    } else {
-      toast("success", "Alumno creado");
+      const fresh = (students ?? []).find((x) => x.id === editing.id) ?? editing;
+      const curAvail = fresh.availableRanges ?? [];
+      const curBlocks = fresh.blockedRanges ?? [];
+      const builtAvail: TimeRange[] = [];
+      for (let i = 0; i < curAvail.length; i++) {
+        if (editRemoveAvail.has(i)) continue;
+        builtAvail.push(editAvailEdits[i] ?? curAvail[i]);
+      }
+      const builtBlocks: TimeRange[] = [];
+      for (let i = 0; i < curBlocks.length; i++) {
+        if (editRemoveBlocks.has(i)) continue;
+        builtBlocks.push(editBlockedEdits[i] ?? curBlocks[i]);
+      }
+      const availChanged =
+        builtAvail.length !== curAvail.length ||
+        editRemoveAvail.size > 0 ||
+        Object.keys(editAvailEdits).length > 0 ||
+        builtAvail.some((r, i) => {
+          const c = curAvail[i];
+          return !c || c.day !== r.day || c.start !== r.start || c.end !== r.end;
+        });
+      const blocksChanged =
+        builtBlocks.length !== curBlocks.length ||
+        builtBlocks.some((r, i) => {
+          const c = curBlocks.filter((_, idx) => !editRemoveBlocks.has(idx))[i];
+          return (
+            !c ||
+            c.day !== r.day ||
+            c.start !== r.start ||
+            c.end !== r.end ||
+            (c.kind ?? "block") !== (r.kind ?? "block") ||
+            (c.title ?? "") !== (r.title ?? "")
+          );
+        });
+      if (availChanged) nextAvail = builtAvail;
+      if (blocksChanged) nextBlocks = builtBlocks;
     }
-    invalidateMany(["/api/students", "/api/subject_students", "/api/subjects", "/api/assignments"]);
-    void load({ force: true });
+
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = {
+        name: fName.trim(),
+        grade: fGrade.trim(),
+        email: fEmail.trim(),
+        color: fColor,
+      };
+      if (editing) payload.id = editing.id;
+      if (nextAvail !== undefined) payload.availableRanges = nextAvail;
+      if (nextBlocks !== undefined) payload.blockedRanges = nextBlocks;
+
+      const res = await fetch("/api/students", {
+        method: editing ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        return toast("error", (await res.json().catch(() => ({}))).error || "Error al guardar los datos del alumno");
+      }
+      const saved: Student = await res.json();
+
+      // Solo mutar matrícula que cambió, en paralelo.
+      const rows = subjectLinks.filter((r) => r.studentId === saved.id);
+      const linkOps: Promise<Response>[] = [];
+      for (const sub of subjects) {
+        const row = rows.find((r) => r.subjectId === sub.id);
+        const want = selSubjects.has(sub.id);
+        if (want && !row) {
+          linkOps.push(
+            fetch("/api/subject_students", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ subjectId: sub.id, studentId: saved.id }),
+            }),
+          );
+        } else if (!want && row) {
+          linkOps.push(fetch(`/api/subject_students?id=${row.id}`, { method: "DELETE" }));
+        }
+      }
+      if (linkOps.length > 0) {
+        const linkResults = await Promise.all(linkOps);
+        if (linkResults.some((r) => !r.ok)) {
+          return toast("error", "No se pudo actualizar la matrícula del alumno");
+        }
+      }
+
+      // Borrar / parchear clases en paralelo.
+      const eventOps: Promise<Response>[] = [];
+      for (const id of editRemoveEvents) {
+        eventOps.push(fetch(`/api/assignments?id=${id}`, { method: "DELETE" }));
+      }
+      for (const [k, v] of Object.entries(editEventEdits)) {
+        const id = Number(k);
+        if (!Number.isFinite(id) || editRemoveEvents.has(id)) continue;
+        eventOps.push(
+          fetch("/api/assignments", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id,
+              dayOfWeek: v.dayOfWeek,
+              startHour: v.startHour,
+              endHour: v.endHour,
+            }),
+          }),
+        );
+      }
+      if (eventOps.length > 0) {
+        const eventResults = await Promise.all(eventOps);
+        if (eventResults.some((r) => !r.ok)) {
+          return toast("error", "No se pudieron guardar los cambios de clases del alumno");
+        }
+      }
+
+      // Actualizar UI/caché al instante sin refetch de 7 endpoints.
+      const nextStudents = editing
+        ? (students ?? []).map((s) => (s.id === saved.id ? { ...s, ...saved } : s))
+        : [...(students ?? []), saved];
+      setStudents(nextStudents);
+      put("/api/students", nextStudents);
+
+      if (_subjectsChanged) {
+        invalidate("/api/subject_students");
+        const freshLinks = await fetchApi<SSRow[]>("/api/subject_students");
+        if (freshLinks) {
+          setSubjectLinks(freshLinks);
+          put("/api/subject_students", freshLinks);
+        }
+      }
+
+      if (_eventsRemoved > 0 || _eventsEditsCount > 0) {
+        invalidate("/api/assignments");
+        const freshAsg = await fetchApi<Assignment[]>("/api/assignments");
+        if (freshAsg) {
+          setAssignments(freshAsg);
+          put("/api/assignments", freshAsg);
+        }
+      }
+
+      setEditOpen(false);
+      setEditRemoveAvail(new Set());
+      setEditAvailEdits({});
+      setAvailEditIndex(null);
+      setEditRemoveBlocks(new Set());
+      setEditRemoveEvents(new Set());
+      setEditBlockedEdits({});
+      setEditEventEdits({});
+      setBlockedEditIndex(null);
+      setEventEditId(null);
+
+      if (editing) {
+        const parts: string[] = [];
+        if (_nameChanged || _gradeChanged || _emailChanged || _colorChanged) parts.push("Datos del alumno actualizados");
+        if (_subjectsChanged) parts.push("Matrícula actualizada");
+        if (_availRemoved > 0) parts.push(_availRemoved === 1 ? "1 franja de disponibilidad quitada" : `${_availRemoved} franjas de disponibilidad quitadas`);
+        if (_availEditsCount > 0) parts.push(_availEditsCount === 1 ? "1 franja de disponibilidad modificada" : `${_availEditsCount} franjas de disponibilidad modificadas`);
+        if (_blocksRemoved > 0) parts.push(_blocksRemoved === 1 ? "1 ocupación quitada" : `${_blocksRemoved} ocupaciones quitadas`);
+        if (_blockedEditsCount > 0) parts.push(_blockedEditsCount === 1 ? "1 ocupación modificada" : `${_blockedEditsCount} ocupaciones modificadas`);
+        if (_eventsRemoved > 0) parts.push(_eventsRemoved === 1 ? "1 clase eliminada" : `${_eventsRemoved} clases eliminadas`);
+        if (_eventsEditsCount > 0) parts.push(_eventsEditsCount === 1 ? "1 clase modificada" : `${_eventsEditsCount} clases modificadas`);
+        toast("success", parts.length === 0 ? "Cambios guardados" : parts.join(" · "));
+      } else {
+        toast("success", "Alumno creado");
+      }
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function doCalendarDelete() {
@@ -683,7 +745,6 @@ export default function StudentsClient() {
               variant="outline"
               onClick={() => {
                 if ((students ?? []).length === 0) return toast("error", "No hay alumnos todavía");
-                setCalendarInitialView("blocks");
                 setAllBlocksOpen(true);
               }}
             >
@@ -732,23 +793,34 @@ export default function StudentsClient() {
         />
       ) : (
         <div className="entity-list entity-list-stacked">
-          {filteredStudents.map((s) => (
+          {filteredStudents.map((s) => {
+            const swatchColor = studentColorById[s.id] ?? resolveStudentColor(s, 0);
+            return (
             <article key={s.id} className="entity-card">
               <div className="entity-card-header">
-                <div className="min-w-0 flex-1">
-                  <h3 className="entity-card-title">{s.name}</h3>
-                  <div className="entity-card-meta">
-                    {s.grade ? (
-                      <Badge variant="gray" className="font-normal">{s.grade}</Badge>
-                    ) : (
-                      <span className="text-xs text-gray-400">Sin curso</span>
-                    )}
-                    {s.email ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-gray-500 min-w-0">
-                        <Mail size={12} className="shrink-0" />
-                        <span className="truncate">{s.email}</span>
-                      </span>
-                    ) : null}
+                <div className="min-w-0 flex-1 flex items-start gap-3">
+                  <span
+                    className="entity-card-link-icon shrink-0"
+                    aria-hidden
+                    style={{ backgroundColor: `${swatchColor}18`, color: swatchColor }}
+                  >
+                    <GraduationCap size={18} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="entity-card-title">{s.name}</h3>
+                    <div className="entity-card-meta">
+                      {s.grade ? (
+                        <Badge variant="gray" className="font-normal">{s.grade}</Badge>
+                      ) : (
+                        <span className="text-xs text-gray-400">Sin curso</span>
+                      )}
+                      {s.email ? (
+                        <span className="inline-flex items-center gap-1 text-xs text-gray-500 min-w-0">
+                          <Mail size={12} className="shrink-0" />
+                          <span className="truncate">{s.email}</span>
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 <div className="entity-card-actions">
@@ -809,7 +881,8 @@ export default function StudentsClient() {
                 </div>
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -837,6 +910,12 @@ export default function StudentsClient() {
                 <Input id="f-email" type="text" value={fEmail} onChange={(e) => setFEmail(e.target.value)} placeholder="nombre@ejemplo.com" />
               </div>
             </div>
+            <SubjectColorPicker
+              id="f-student-color"
+              label="Color del alumno"
+              value={fColor}
+              onChange={setFColor}
+            />
             <div>
               <Label htmlFor="f-subjects">Asignaturas en las que está matriculado</Label>
               {subjects.length === 0 ? (
@@ -1178,7 +1257,6 @@ export default function StudentsClient() {
         students={students ?? []}
         subjects={subjects}
         assignments={assignments}
-        initialView={calendarInitialView}
         onEditAssignment={(id) => setCalEditId(id)}
         onDeleteAssignment={(id) => setCalDeleteId(id)}
       />

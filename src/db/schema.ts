@@ -20,6 +20,8 @@ export const students = pgTable("students", {
   blockedRanges: jsonb("blocked_ranges").notNull().default([]),
   /** Franjas en las que el alumno SÍ puede asistir (vacío = sin restricción positiva). */
   availableRanges: jsonb("available_ranges").notNull().default([]),
+  /** Color hex (#RRGGBB) para el calendario; null = preset automático. */
+  color: text("color"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

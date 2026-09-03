@@ -174,11 +174,45 @@ export function* slotStartsForDuration(
   }
 }
 
-/** Rango visible del calendario semanal (horas enteras). */
+/** Rango absoluto del calendario semanal (horas enteras); fallback si no hay eventos. */
 export const SCHEDULE_DAY_START = 7;
 export const SCHEDULE_DAY_END = 23;
+/** Margen (horas) alrededor del contenido al ajustar el rango visible. */
+export const SCHEDULE_VIEW_MARGIN_H = 1;
 /** Fin inclusivo de selectores (medianoche). */
 export const SCHEDULE_SELECT_END = 24;
+
+/**
+ * Rango visible del grid: del evento más temprano al más tardío + margen.
+ * Sin contenido usa `fallbackStart`–`fallbackEnd` (p. ej. 7–23).
+ */
+export function computeVisibleScheduleRange(
+  contentHours: number[],
+  fallbackStart = SCHEDULE_DAY_START,
+  fallbackEnd = SCHEDULE_DAY_END,
+  marginH = SCHEDULE_VIEW_MARGIN_H,
+): { lo: number; hi: number } {
+  if (contentHours.length === 0) {
+    return { lo: fallbackStart, hi: fallbackEnd };
+  }
+  const minH = Math.min(...contentHours);
+  const maxH = Math.max(...contentHours);
+  let lo = Math.floor(minH - marginH);
+  let hi = Math.ceil(maxH + marginH);
+  // Nunca recortar el contenido real
+  lo = Math.min(lo, Math.floor(minH));
+  hi = Math.max(hi, Math.ceil(maxH));
+  // Acotar al día habitual solo si el contenido cabe dentro
+  if (minH >= fallbackStart) lo = Math.max(lo, fallbackStart);
+  if (maxH <= fallbackEnd) hi = Math.min(hi, fallbackEnd);
+  // Límites absolutos del día (0–24)
+  lo = Math.max(0, lo);
+  hi = Math.min(SCHEDULE_SELECT_END, hi);
+  lo = Math.min(lo, Math.floor(minH));
+  hi = Math.max(hi, Math.ceil(maxH));
+  if (hi <= lo) hi = lo + 1;
+  return { lo, hi };
+}
 
 /** Opciones de horas para selects: 00:00 .. 23:30 en pasos de 30 min. */
 export function hourOptions(from = 0, to = 24): { value: string; label: string }[] {

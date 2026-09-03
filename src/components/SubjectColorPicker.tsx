@@ -7,16 +7,22 @@ interface SubjectColorPickerProps {
   value: string;
   onChange: (color: string) => void;
   id?: string;
+  label?: string;
 }
 
-export default function SubjectColorPicker({ value, onChange, id = "subject-color" }: SubjectColorPickerProps) {
+export default function SubjectColorPicker({
+  value,
+  onChange,
+  id = "subject-color",
+  label = "Color de la asignatura",
+}: SubjectColorPickerProps) {
   return (
     <div className="space-y-2">
-      <Label htmlFor={id}>Color de la asignatura</Label>
+      <Label htmlFor={id}>{label}</Label>
       <div
         className="subject-color-grid"
         role="radiogroup"
-        aria-label="Color de la asignatura"
+        aria-label={label}
       >
         {SUBJECT_COLOR_PRESETS.map((preset) => (
           <button
@@ -34,7 +40,7 @@ export default function SubjectColorPicker({ value, onChange, id = "subject-colo
           <input
             id={id}
             type="color"
-            value={value.startsWith("#") ? value : "#2563eb"}
+            value={value.startsWith("#") ? value : SUBJECT_COLOR_PRESETS[0]}
             onChange={(e) => onChange(e.target.value.toLowerCase())}
             className="subject-color-custom-input"
             aria-label="Elegir color personalizado"
