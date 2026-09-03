@@ -1,13 +1,4 @@
-"use client";
-
-import { clientPage } from "@/lib/clientPage";
-
-const StudentsClient = clientPage(() => import("@/components/StudentsClient"));
-
+/** Contenido montado en AppTabHost para navegación instantánea entre pestañas. */
 export default function StudentsPage() {
-  return (
-    <div className="page-stack">
-      <StudentsClient />
-    </div>
-  );
+  return null;
 }

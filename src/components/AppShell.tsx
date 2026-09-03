@@ -1,11 +1,14 @@
 "use client";
 
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { CalendarClock } from "lucide-react";
+import AppTabHost from "@/components/AppTabHost";
 import BottomNav from "@/components/BottomNav";
 import DesktopNav from "@/components/DesktopNav";
 import ScheduleLockToggle from "@/components/ScheduleLockToggle";
+import { isMainTabPath } from "@/lib/mainTabPaths";
 import { APP_NAME } from "@/lib/pwa";
 
 export default function AppShell({
@@ -18,6 +21,17 @@ export default function AppShell({
   const pathname = usePathname() ?? "/";
   const isAuthPage =
     pathname.startsWith("/login") || pathname.startsWith("/auth") || pathname.startsWith("/~offline");
+  const showMainTabs = isMainTabPath(pathname);
+
+  useEffect(() => {
+    document.body.classList.remove("weekgrid-fullscreen-active");
+  }, [pathname]);
+
+  useEffect(() => {
+    if (showMainTabs) {
+      window.scrollTo(0, 0);
+    }
+  }, [pathname, showMainTabs]);
 
   if (isAuthPage) {
     return <>{children}</>;
@@ -45,8 +59,9 @@ export default function AppShell({
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 overflow-x-hidden main-with-dock">
-        {children}
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 overflow-x-clip main-with-dock">
+        <AppTabHost pathname={pathname} hostVisible={showMainTabs} />
+        {!showMainTabs ? children : null}
       </main>
 
       <BottomNav />

@@ -1,5 +1,5 @@
-export const APP_NAME = "Gestor de horario";
-export const APP_SHORT_NAME = "Horario";
+export const APP_NAME = "Gestor horario";
+export const APP_SHORT_NAME = "Gestor horario";
 export const APP_DESCRIPTION = "Clases, tutorías y horarios en móvil o escritorio.";
 export const APP_THEME_COLOR = "#ffffff";
 export const APP_BACKGROUND_COLOR = "#f8fafc";

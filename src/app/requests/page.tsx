@@ -1,9 +1,4 @@
-"use client";
-
-import { clientPage } from "@/lib/clientPage";
-
-const RequestsClient = clientPage(() => import("./RequestsClient"));
-
+/** Contenido montado en AppTabHost para navegación instantánea entre pestañas. */
 export default function RequestsPage() {
-  return <RequestsClient />;
+  return null;
 }

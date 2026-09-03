@@ -61,9 +61,9 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" className="h-full">
+    <html lang="es">
       <body
-        className="min-h-full min-h-dvh"
+        className="min-h-dvh"
         style={{ backgroundColor: APP_BACKGROUND_COLOR }}
       >
         <PwaProvider>

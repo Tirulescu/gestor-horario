@@ -1,9 +1,4 @@
-"use client";
-
-import { clientPage } from "@/lib/clientPage";
-
-const DashboardClient = clientPage(() => import("./DashboardClient"));
-
+/** Contenido montado en AppTabHost para navegación instantánea entre pestañas. */
 export default function DashboardPage() {
-  return <DashboardClient />;
+  return null;
 }

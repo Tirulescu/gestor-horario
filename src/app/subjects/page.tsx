@@ -1,9 +1,4 @@
-"use client";
-
-import { clientPage } from "@/lib/clientPage";
-
-const SubjectsPageClient = clientPage(() => import("./SubjectsPageClient"));
-
+/** Contenido montado en AppTabHost para navegación instantánea entre pestañas. */
 export default function SubjectsPage() {
-  return <SubjectsPageClient />;
+  return null;
 }
