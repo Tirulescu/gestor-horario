@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Calendar } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -18,8 +18,13 @@ import { buildSubjectColorMap } from "@/lib/subjectColors";
 
 interface Subject { id: number; name: string; color?: string | null; }
 interface Assignment {
-  id: number; subjectId: number; dayOfWeek: number; startHour: number; endHour: number;
-  origin: string; subject?: { id: number; name: string };
+  id: number;
+  subjectId: number;
+  studentId: number;
+  dayOfWeek: number;
+  startHour: number;
+  endHour: number;
+  subject?: { id: number; name: string } | null;
 }
 interface TeacherAvailability { dayOfWeek: number; startHour: number; endHour: number; }
 
@@ -33,6 +38,7 @@ interface StudentScheduleViewDialogProps {
     blockedRanges?: TimeRange[];
   } | null;
   subjects?: Subject[];
+  assignments?: Assignment[];
   /** Disponibilidad del profesor: las rayas del fondo marcan fuera de ella. */
   teacherAvailabilities?: TeacherAvailability[];
 }
@@ -42,22 +48,13 @@ export default function StudentScheduleViewDialog({
   onOpenChange,
   student,
   subjects = [],
+  assignments: allAssignments = [],
   teacherAvailabilities = [],
 }: StudentScheduleViewDialogProps) {
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-
-  useEffect(() => {
-    if (!open || !student) {
-      setAssignments([]);
-      return;
-    }
-    let alive = true;
-    fetch(`/api/assignments?studentId=${student.id}`)
-      .then((r) => r.json())
-      .then((rows: Assignment[]) => { if (alive) setAssignments(rows); })
-      .catch(() => { if (alive) setAssignments([]); });
-    return () => { alive = false; };
-  }, [open, student?.id]);
+  const assignments = useMemo(
+    () => (student ? allAssignments.filter((a) => a.studentId === student.id) : []),
+    [allAssignments, student?.id],
+  );
 
   const subjectColor = useMemo(() => buildSubjectColorMap(subjects), [subjects]);
 

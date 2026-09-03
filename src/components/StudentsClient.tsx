@@ -544,7 +544,7 @@ export default function StudentsClient() {
       return toast("error", (await res.json().catch(() => ({}))).error || "Error");
     }
     const saved: Student = await res.json();
-    const rows = await fetch(`/api/subject_students?studentId=${saved.id}`).then((r) => r.json()) as SSRow[];
+    const rows = subjectLinks.filter((r) => r.studentId === saved.id);
     for (const sub of subjects) {
       const row = rows.find((r) => r.subjectId === sub.id);
       const want = selSubjects.has(sub.id);
@@ -808,6 +808,7 @@ export default function StudentsClient() {
         onOpenChange={setViewOpen}
         student={viewStudentFresh}
         subjects={subjects}
+        assignments={assignments}
         teacherAvailabilities={availabilities}
       />
 
@@ -834,6 +835,7 @@ export default function StudentsClient() {
         onOpenChange={setAllBlocksOpen}
         students={students ?? []}
         subjects={subjects}
+        assignments={assignments}
         initialView={calendarInitialView}
         onRemoveBlock={scheduleLocked ? undefined : removeBlock}
         onRemoveEvent={scheduleLocked ? undefined : removeEvent}

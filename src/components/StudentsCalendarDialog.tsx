@@ -43,8 +43,8 @@ interface Assignment {
   startHour: number;
   endHour: number;
   collectiveSessionId?: string | null;
-  subject?: { id: number; name: string };
-  student?: { id: number; name: string };
+  subject?: { id: number; name: string } | null;
+  student?: { id: number; name: string } | null;
 }
 
 interface StudentsCalendarDialogProps {
@@ -52,6 +52,7 @@ interface StudentsCalendarDialogProps {
   onOpenChange: (open: boolean) => void;
   students: Student[];
   subjects?: Subject[];
+  assignments?: Assignment[];
   initialView?: ViewMode;
   onRemoveBlock?: (student: Student, indices: number[]) => Promise<boolean | void>;
   onRemoveEvent?: (assignmentId: number) => Promise<boolean | void>;
@@ -191,6 +192,7 @@ export default function StudentsCalendarDialog({
   onOpenChange,
   students,
   subjects = [],
+  assignments = [],
   initialView = "blocks",
   onRemoveBlock,
   onRemoveEvent,
@@ -198,8 +200,6 @@ export default function StudentsCalendarDialog({
   const [view, setView] = useState<ViewMode>(initialView);
   const [gradeFilter, setGradeFilter] = useState("all");
   const [studentFilter, setStudentFilter] = useState("all");
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [loadingEvents, setLoadingEvents] = useState(false);
   const [slotOpen, setSlotOpen] = useState(false);
   const [slotFocus, setSlotFocus] = useState<WeekBlock | null>(null);
 
@@ -227,21 +227,6 @@ export default function StudentsCalendarDialog({
     setStudentFilter("all");
     closeSlot();
   }, [open, initialView, closeSlot]);
-
-  useEffect(() => {
-    if (!open) {
-      setAssignments([]);
-      return;
-    }
-    let alive = true;
-    setLoadingEvents(true);
-    fetch("/api/assignments")
-      .then((r) => r.json())
-      .then((rows: Assignment[]) => { if (alive) setAssignments(Array.isArray(rows) ? rows : []); })
-      .catch(() => { if (alive) setAssignments([]); })
-      .finally(() => { if (alive) setLoadingEvents(false); });
-    return () => { alive = false; };
-  }, [open, students]);
 
   const grades = useMemo(
     () => Array.from(new Set(students.map((s) => (s.grade ?? "").trim()).filter(Boolean))).sort(),
@@ -391,23 +376,14 @@ export default function StudentsCalendarDialog({
       return;
     }
     if (p.kind === "assignment" && p.assignmentId != null) {
-      const deleted = assignments.find((a) => a.id === p.assignmentId);
       await onRemoveEvent?.(p.assignmentId);
-      setAssignments((cur) => {
-        if (deleted?.collectiveSessionId) {
-          return cur.filter((a) => a.collectiveSessionId !== deleted.collectiveSessionId);
-        }
-        return cur.filter((a) => a.id !== p.assignmentId);
-      });
       closeSlot();
     }
-  }, [students, onRemoveBlock, onRemoveEvent, assignments, closeSlot]);
+  }, [students, onRemoveBlock, onRemoveEvent, closeSlot]);
 
   const emptyMessage = view === "blocks"
     ? "Ningún bloqueo con los filtros seleccionados."
-    : loadingEvents
-      ? "Cargando clases…"
-      : "Ninguna clase con los filtros seleccionados.";
+    : "Ninguna clase con los filtros seleccionados.";
 
   return (
     <Dialog open={open} onOpenChange={handleCalendarOpenChange}>
