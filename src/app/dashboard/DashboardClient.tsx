@@ -384,11 +384,14 @@ export default function DashboardClient() {
       toast("error", d.error || "Error al borrar");
     } else {
       toast("success", selectedCollectiveSession ? "Sesión colectiva borrada" : "Asignación borrada");
+      commitAssignments(
+        target.collectiveSessionId
+          ? assignments.filter((a) => a.collectiveSessionId !== target.collectiveSessionId)
+          : assignments.filter((a) => a.id !== target.id),
+      );
     }
     setSelectedAssignment(null);
     setSelectedCollectiveSession(null);
-    invalidate("/api/assignments");
-    void load({ force: true });
   }
 
   async function applyAvailabilityChanges(args: {
@@ -452,35 +455,40 @@ export default function DashboardClient() {
       const created: TeacherBlock[] = [];
       let nextAv = availabilities;
 
-      for (const id of args.removeIds) {
-        const res = await fetch(`/api/teacher_blocks?id=${id}`, { method: "DELETE" });
-        if (!res.ok) {
+      if (args.removeIds.length > 0) {
+        const delResults = await Promise.all(
+          args.removeIds.map((id) => fetch(`/api/teacher_blocks?id=${id}`, { method: "DELETE" })),
+        );
+        if (delResults.some((r) => !r.ok)) {
           toast("error", "No se pudo quitar el bloqueo del profesor");
           return false;
         }
-        removed++;
+        removed = args.removeIds.length;
       }
 
       if (args.create) {
         const { days, start, end, title } = args.create;
-        for (const day of days) {
+        const dayOps = days.filter((day) => {
           const dupBlock = teacherBlocks.some(
             (b) => !args.removeIds.includes(b.id) && b.dayOfWeek === day && end > b.startHour && start < b.endHour,
-          ) || created.some((b) => b.dayOfWeek === day && end > b.startHour && start < b.endHour);
+          );
           const dupAsg = assignments.some(
             (a) => a.dayOfWeek === day && end > a.startHour && start < a.endHour,
           );
-          if (dupBlock || dupAsg) continue;
-          const res = await fetch("/api/teacher_blocks", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              title,
-              dayOfWeek: day,
-              startHour: start,
-              endHour: end,
-            }),
-          });
+          return !dupBlock && !dupAsg;
+        });
+
+        const createResults = await Promise.all(
+          dayOps.map((day) =>
+            fetch("/api/teacher_blocks", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ title, dayOfWeek: day, startHour: start, endHour: end }),
+            }).then(async (res) => ({ res, day })),
+          ),
+        );
+
+        for (const { res, day } of createResults) {
           if (!res.ok) {
             toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
             return false;
@@ -665,11 +673,29 @@ export default function DashboardClient() {
     });
     setSavingEdit(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar la clase. Comprueba que no haya conflictos de horario.");
+    const updated = (await res.json().catch(() => null)) as Assignment | null;
+    const patch = updated ?? { dayOfWeek: day, startHour: start, endHour: end };
+    if (selectedCollectiveSession) {
+      const ids = new Set(selectedCollectiveSession.map((a) => a.id));
+      commitAssignments(
+        assignments.map((a) =>
+          ids.has(a.id)
+            ? { ...a, dayOfWeek: patch.dayOfWeek ?? day, startHour: patch.startHour ?? start, endHour: patch.endHour ?? end }
+            : a,
+        ),
+      );
+    } else {
+      commitAssignments(
+        assignments.map((a) =>
+          a.id === target.id
+            ? { ...a, dayOfWeek: patch.dayOfWeek ?? day, startHour: patch.startHour ?? start, endHour: patch.endHour ?? end }
+            : a,
+        ),
+      );
+    }
     toast("success", selectedCollectiveSession ? "Sesión colectiva movida" : "Clase movida");
     setSelectedAssignment(null);
     setSelectedCollectiveSession(null);
-    invalidate("/api/assignments");
-    void load({ force: true });
   }
 
   const grades = useMemo(
@@ -696,22 +722,23 @@ export default function DashboardClient() {
   }): Promise<boolean> {
     setSavingStudentManage(true);
     try {
-      let nextStudents = students;
-      const blockedAfterRemove = new Map<number, TimeRange[]>();
-      const availableAfterRemove = new Map<number, TimeRange[]>();
+      type Patch = { student: Student; blocked: TimeRange[]; available: TimeRange[] };
+      const patches = new Map<number, Patch>();
+
       for (const { student, indices } of args.removes) {
         if (indices.length === 0) continue;
         const drop = new Set(indices);
         const nextBlocked = (student.blockedRanges ?? []).filter((_, i) => !drop.has(i));
-        const ok = await updateStudentRanges(student, { blockedRanges: nextBlocked });
-        if (!ok) { toast("error", "No se pudo quitar la ocupación"); return false; }
-        blockedAfterRemove.set(student.id, nextBlocked);
-        availableAfterRemove.set(student.id, student.availableRanges ?? []);
-        nextStudents = nextStudents.map((s) => s.id === student.id ? { ...s, blockedRanges: nextBlocked } : s);
+        patches.set(student.id, {
+          student,
+          blocked: nextBlocked,
+          available: student.availableRanges ?? [],
+        });
       }
       if (args.adds.length > 0) {
         for (const st of args.targets) {
-          const cur = blockedAfterRemove.get(st.id) ?? st.blockedRanges ?? [];
+          const existing = patches.get(st.id);
+          const cur = existing?.blocked ?? st.blockedRanges ?? [];
           const toAdd: TimeRange[] = [];
           for (const r of args.adds) {
             const dup = cur.some((b) => b.day === r.day && r.end > b.start && r.start < b.end) ||
@@ -720,14 +747,36 @@ export default function DashboardClient() {
           }
           if (toAdd.length === 0) continue;
           const nextBlocked = [...cur, ...toAdd];
-          const baseAvail = availableAfterRemove.get(st.id) ?? st.availableRanges ?? [];
-          const nextAvailable = carveAvailabilityAroundBlocked(baseAvail, nextBlocked);
-          const ok = await updateStudentRanges(st, { blockedRanges: nextBlocked, availableRanges: nextAvailable });
-          if (!ok) { toast("error", "No se pudo guardar la ocupación"); return false; }
-          nextStudents = nextStudents.map((s) => s.id === st.id ? { ...s, blockedRanges: nextBlocked, availableRanges: nextAvailable } : s);
+          const baseAvail = existing?.available ?? st.availableRanges ?? [];
+          patches.set(st.id, {
+            student: st,
+            blocked: nextBlocked,
+            available: carveAvailabilityAroundBlocked(baseAvail, nextBlocked),
+          });
         }
       }
-      commitStudents(nextStudents);
+
+      const results = await Promise.all(
+        [...patches.values()].map(async (p) => {
+          const ok = await updateStudentRanges(p.student, {
+            blockedRanges: p.blocked,
+            availableRanges: p.available,
+          });
+          return { ok, p };
+        }),
+      );
+      if (results.some((r) => !r.ok)) {
+        toast("error", "No se pudieron guardar las ocupaciones");
+        return false;
+      }
+
+      commitStudents(
+        students.map((s) => {
+          const p = patches.get(s.id);
+          if (!p) return s;
+          return { ...s, blockedRanges: p.blocked, availableRanges: p.available };
+        }),
+      );
       toast("success", "Cambios guardados");
       return true;
     } finally { setSavingStudentManage(false); }
@@ -745,32 +794,47 @@ export default function DashboardClient() {
   }): Promise<boolean> {
     setSavingStudentManage(true);
     try {
-      const created: Assignment[] = [];
-      for (const id of args.removeIds) {
-        const res = await fetch(`/api/assignments?id=${id}`, { method: "DELETE" });
-        if (!res.ok) { toast("error", "No se pudo eliminar la clase"); return false; }
+      if (args.removeIds.length > 0) {
+        const delResults = await Promise.all(
+          args.removeIds.map((id) => fetch(`/api/assignments?id=${id}`, { method: "DELETE" })),
+        );
+        if (delResults.some((r) => !r.ok)) {
+          toast("error", "No se pudo eliminar la clase");
+          return false;
+        }
       }
+      const created: Assignment[] = [];
       if (args.create) {
         const { targets, subjectId, days, start, endForStudent } = args.create;
         const subj = subjects.find((s) => s.id === subjectId);
         if (!subj) { toast("error", "Asignatura no encontrada"); return false; }
+        const createOps: { day: number; st: Student; end: number; sessionId: string | null }[] = [];
         for (const day of days) {
           const sessionId = subj.isCollective && targets.length > 1 ? crypto.randomUUID() : null;
           for (const st of targets) {
-            const end = endForStudent(st);
-            const res = await fetch("/api/assignments", {
+            createOps.push({ day, st, end: endForStudent(st), sessionId });
+          }
+        }
+        const createResults = await Promise.all(
+          createOps.map(({ day, st, end, sessionId }) =>
+            fetch("/api/assignments", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ subjectId, studentId: st.id, dayOfWeek: day, startHour: start, endHour: end, collectiveSessionId: sessionId }),
-            });
-            if (!res.ok) { toast("error", `No se pudo crear la clase de ${st.name}`); return false; }
-            const row = await res.json() as Assignment;
-            created.push({
-              ...row,
-              student: { id: st.id, name: st.name },
-              subject: { id: subj.id, name: subj.name, isCollective: subj.isCollective },
-            });
+            }).then(async (res) => ({ res, st, subj })),
+          ),
+        );
+        for (const { res, st, subj: s } of createResults) {
+          if (!res.ok) {
+            toast("error", `No se pudo crear la clase de ${st.name}`);
+            return false;
           }
+          const row = await res.json() as Assignment;
+          created.push({
+            ...row,
+            student: { id: st.id, name: st.name },
+            subject: { id: s.id, name: s.name, isCollective: s.isCollective },
+          });
         }
       }
       commitAssignments([

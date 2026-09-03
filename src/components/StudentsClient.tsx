@@ -19,7 +19,7 @@ import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import FloatingActionButton from "@/components/FloatingActionButton";
 import { TableCardSkeleton } from "@/components/skeletons";
-import { warmData, put, invalidate, invalidateMany, hasFreshAll, STUDENTS_ENDPOINTS, fetchApi, onCacheStale } from "@/lib/clientCache";
+import { warmData, put, invalidate, hasFreshAll, STUDENTS_ENDPOINTS, fetchApi, onCacheStale } from "@/lib/clientCache";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { fmtDayRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, endIfAfterStart } from "@/lib/hours";
 import { DAYS } from "@/lib/validate";
@@ -316,26 +316,25 @@ export default function StudentsClient() {
     let removed = 0;
     let addedStudents = 0;
     try {
-      const blockedAfterRemove = new Map<number, TimeRange[]>();
-      const availableAfterRemove = new Map<number, TimeRange[]>();
+      type Patch = { student: Student; blocked: TimeRange[]; available: TimeRange[] };
+      const patches = new Map<number, Patch>();
 
       for (const { student, indices } of args.removes) {
         if (indices.length === 0) continue;
         const drop = new Set(indices);
         const nextBlocked = (student.blockedRanges ?? []).filter((_, i) => !drop.has(i));
-        const ok = await updateStudentRanges(student, { blockedRanges: nextBlocked });
-        if (!ok) {
-          toast("error", "No se pudo quitar la ocupación");
-          return false;
-        }
         removed += indices.length;
-        blockedAfterRemove.set(student.id, nextBlocked);
-        availableAfterRemove.set(student.id, student.availableRanges ?? []);
+        patches.set(student.id, {
+          student,
+          blocked: nextBlocked,
+          available: student.availableRanges ?? [],
+        });
       }
 
       if (args.adds.length > 0) {
         for (const st of args.targets) {
-          const cur = blockedAfterRemove.get(st.id) ?? st.blockedRanges ?? [];
+          const existing = patches.get(st.id);
+          const cur = existing?.blocked ?? st.blockedRanges ?? [];
           const toAdd: TimeRange[] = [];
           for (const r of args.adds) {
             const title = r.title?.trim();
@@ -354,19 +353,37 @@ export default function StudentsClient() {
           }
           if (toAdd.length === 0) continue;
           const nextBlocked = [...cur, ...toAdd];
-          const baseAvail = availableAfterRemove.get(st.id) ?? st.availableRanges ?? [];
-          const nextAvailable = carveAvailabilityAroundBlocked(baseAvail, nextBlocked);
-          const ok = await updateStudentRanges(st, {
-            blockedRanges: nextBlocked,
-            availableRanges: nextAvailable,
+          const baseAvail = existing?.available ?? st.availableRanges ?? [];
+          patches.set(st.id, {
+            student: st,
+            blocked: nextBlocked,
+            available: carveAvailabilityAroundBlocked(baseAvail, nextBlocked),
           });
-          if (!ok) {
-            toast("error", "No se pudo guardar la ocupación");
-            return false;
-          }
           addedStudents++;
         }
       }
+
+      const results = await Promise.all(
+        [...patches.values()].map(async (p) => {
+          const ok = await updateStudentRanges(p.student, {
+            blockedRanges: p.blocked,
+            availableRanges: p.available,
+          });
+          return { ok, p };
+        }),
+      );
+      if (results.some((r) => !r.ok)) {
+        toast("error", "No se pudieron guardar las ocupaciones");
+        return false;
+      }
+
+      const nextStudents = (students ?? []).map((s) => {
+        const p = patches.get(s.id);
+        if (!p) return s;
+        return { ...s, blockedRanges: p.blocked, availableRanges: p.available };
+      });
+      setStudents(nextStudents);
+      put("/api/students", nextStudents);
 
       const addedAreClasses = args.adds.length > 0 && args.adds.every((r) => r.kind === "class");
       const parts: string[] = [];
@@ -388,8 +405,6 @@ export default function StudentsClient() {
           ? "Cambios guardados"
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
-      invalidate("/api/students");
-      void load({ force: true });
       return true;
     } finally {
       setSaving(false);
@@ -410,16 +425,18 @@ export default function StudentsClient() {
     let removed = 0;
     let created = 0;
     try {
-      for (const id of args.removeIds) {
-        const res = await fetch(`/api/assignments?id=${id}`, { method: "DELETE" });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          toast("error", d.error || "No se pudo eliminar la clase");
+      if (args.removeIds.length > 0) {
+        const delResults = await Promise.all(
+          args.removeIds.map((id) => fetch(`/api/assignments?id=${id}`, { method: "DELETE" })),
+        );
+        if (delResults.some((r) => !r.ok)) {
+          toast("error", "No se pudo eliminar la clase");
           return false;
         }
-        removed++;
+        removed = args.removeIds.length;
       }
 
+      const createdRows: Assignment[] = [];
       if (args.create) {
         const { targets, subjectId, days, start, endForStudent } = args.create;
         const subj = subjects.find((s) => s.id === subjectId);
@@ -431,11 +448,16 @@ export default function StudentsClient() {
           toast("error", "No hay alumnos seleccionados");
           return false;
         }
+        const createOps: { day: number; st: Student; end: number; sessionId: string | null }[] = [];
         for (const day of days) {
           const sessionId = subj.isCollective && targets.length > 1 ? crypto.randomUUID() : null;
           for (const st of targets) {
-            const end = endForStudent(st);
-            const res = await fetch("/api/assignments", {
+            createOps.push({ day, st, end: endForStudent(st), sessionId });
+          }
+        }
+        const createResults = await Promise.all(
+          createOps.map(({ day, st, end, sessionId }) =>
+            fetch("/api/assignments", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -446,16 +468,30 @@ export default function StudentsClient() {
                 endHour: end,
                 collectiveSessionId: sessionId,
               }),
-            });
-            if (!res.ok) {
-              const d = await res.json().catch(() => ({}));
-              toast("error", d.error || `No se pudo crear la clase de ${st.name}`);
-              return false;
-            }
-            created++;
+            }).then(async (res) => ({ res, st, subj })),
+          ),
+        );
+        for (const { res, st, subj: s } of createResults) {
+          if (!res.ok) {
+            toast("error", `No se pudo crear la clase de ${st.name}`);
+            return false;
           }
+          const row = (await res.json()) as Assignment;
+          createdRows.push({
+            ...row,
+            student: { id: st.id, name: st.name },
+            subject: { id: s.id, name: s.name },
+          });
+          created++;
         }
       }
+
+      const nextAssignments = [
+        ...assignments.filter((a) => !args.removeIds.includes(a.id)),
+        ...createdRows,
+      ];
+      setAssignments(nextAssignments);
+      put("/api/assignments", nextAssignments);
 
       const parts: string[] = [];
       if (removed > 0) parts.push(removed === 1 ? "1 clase eliminada" : `${removed} clases eliminadas`);
@@ -466,8 +502,6 @@ export default function StudentsClient() {
           ? "Cambios guardados"
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
-      invalidateMany(["/api/assignments", "/api/subject_students", "/api/students"]);
-      void load({ force: true });
       return true;
     } finally {
       setSaving(false);
@@ -694,14 +728,19 @@ export default function StudentsClient() {
     setCalDeleting(true);
     const res = await fetch(`/api/assignments?id=${calDeleteId}`, { method: "DELETE" });
     setCalDeleting(false);
-    setCalDeleteId(null);
     if (!res.ok) {
+      setCalDeleteId(null);
       const d = await res.json().catch(() => ({}));
       return toast("error", d.error || "No se pudo eliminar la clase");
     }
+    const target = assignments.find((a) => a.id === calDeleteId);
+    const next = target?.collectiveSessionId
+      ? assignments.filter((a) => a.collectiveSessionId !== target.collectiveSessionId)
+      : assignments.filter((a) => a.id !== calDeleteId);
+    setAssignments(next);
+    put("/api/assignments", next);
+    setCalDeleteId(null);
     toast("success", "Clase eliminada");
-    invalidateMany(["/api/assignments", "/api/subject_students"]);
-    void load({ force: true });
   }
 
   async function doDelete() {
@@ -709,10 +748,22 @@ export default function StudentsClient() {
     setDeleting(true);
     const res = await fetch(`/api/students?id=${confirmDel.id}`, { method: "DELETE" });
     setDeleting(false);
+    if (!res.ok) {
+      setConfirmDel(null);
+      return toast("error", "No se pudo borrar el alumno. Puede que tenga clases asignadas.");
+    }
+    const id = confirmDel.id;
+    const nextStudents = (students ?? []).filter((s) => s.id !== id);
+    const nextLinks = subjectLinks.filter((r) => r.studentId !== id);
+    const nextAsg = assignments.filter((a) => a.studentId !== id);
+    setStudents(nextStudents);
+    setSubjectLinks(nextLinks);
+    setAssignments(nextAsg);
+    put("/api/students", nextStudents);
+    put("/api/subject_students", nextLinks);
+    put("/api/assignments", nextAsg);
     setConfirmDel(null);
-    if (!res.ok) return toast("error", "No se pudo borrar el alumno. Puede que tenga clases asignadas.");
-    invalidate("/api/students"); invalidate("/api/subject_students"); toast("success", "Alumno borrado");
-    void load({ force: true });
+    toast("success", "Alumno borrado");
   }
 
   const viewStudentFresh = viewStudent
@@ -1314,10 +1365,16 @@ export default function StudentsClient() {
               toast("error", d.error || "No se pudo guardar");
               return;
             }
+            const updated = (await res.json().catch(() => null)) as Assignment | null;
+            const nextAsg = assignments.map((a) =>
+              a.id === calEditId
+                ? { ...a, ...(updated ?? next), id: calEditId }
+                : a,
+            );
+            setAssignments(nextAsg);
+            put("/api/assignments", nextAsg);
             toast("success", "Clase actualizada");
             setCalEditId(null);
-            invalidateMany(["/api/assignments", "/api/subject_students"]);
-            void load({ force: true });
           }}
         />
       )}

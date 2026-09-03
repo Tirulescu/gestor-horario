@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
 import { fmtDurationMin, collectSubjectDurationOptions, SESSION_PART_MIN, maxSessionParts, MIN_DURATION_MIN, DURATION_STEP_MIN } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
-import { fetchApi, invalidate, invalidateMany, onCacheStale, put, subjectGradeKey, warmData, queuePriorityWrite, flushPendingPriorityWrites } from "@/lib/clientCache";
+import { fetchApi, invalidateMany, onCacheStale, put, subjectGradeKey, warmData, queuePriorityWrite, flushPendingPriorityWrites } from "@/lib/clientCache";
 import { SubjectDetailSkeleton } from "@/components/skeletons";
 import { COPY } from "@/lib/copy";
 import type { ConfirmTarget, GradeDuration, SlotRequest, Student, Subject, SubjectStudent } from "./types";
@@ -258,10 +258,17 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     });
     setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    const created = (await res.json()) as SubjectStudent;
+    const student = allStudents.find((s) => s.id === created.studentId);
+    const row: SubjectStudent = {
+      ...created,
+      student: student ? { id: student.id, name: student.name, grade: student.grade ?? null } : created.student,
+    };
+    setMembers((cur) => [...cur, row].sort((a, b) => a.priority - b.priority || a.id - b.id));
+    const cached = warmData<SubjectStudent[]>("/api/subject_students") ?? [];
+    put("/api/subject_students", [...cached.filter((x) => x.id !== row.id), row]);
     toast("success", "Alumno añadido");
     setMemberOpen(false);
-    invalidateMany(["/api/subject_students", "/api/students"]);
-    await load();
   }
 
   function openEditMember(m: SubjectStudent) {
@@ -307,10 +314,19 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     });
     setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    const updated = (await res.json()) as SubjectStudent;
+    setMembers((cur) =>
+      cur.map((m) => (m.id === updated.id ? { ...m, ...updated, student: m.student } : m)),
+    );
+    const cached = warmData<SubjectStudent[]>("/api/subject_students");
+    if (cached) {
+      put(
+        "/api/subject_students",
+        cached.map((m) => (m.id === updated.id ? { ...m, ...updated, student: m.student } : m)),
+      );
+    }
     toast("success", "Alumno actualizado");
     setEditMember(null);
-    invalidate("/api/subject_students");
-    await load();
   }
 
   function applyMemberSwap(memberId: number, dir: "up" | "down") {
@@ -414,28 +430,34 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   async function confirmDelete() {
     if (!confirmTarget || deleting) return;
     setDeleting(true);
-    if (confirmTarget.kind === "member") {
-      const res = await fetch(`/api/subject_students?id=${confirmTarget.id}`, { method: "DELETE" });
+    const target = confirmTarget;
+    if (target.kind === "member") {
+      const res = await fetch(`/api/subject_students?id=${target.id}`, { method: "DELETE" });
       setDeleting(false);
       setConfirmTarget(null);
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         toast("error", d.error || "Error al borrar");
-      } else {
-        toast("success", "Alumno quitado");
+        return;
       }
-    } else {
-      const res = await fetch(`/api/subject_grade_durations?id=${confirmTarget.id}`, { method: "DELETE" });
-      setDeleting(false);
-      setConfirmTarget(null);
-      if (!res.ok) {
-        toast("error", (await res.json().catch(() => ({}))).error || "No se pudo borrar");
-      } else {
-        toast("success", "Regla de curso eliminada");
-      }
+      setMembers((cur) => cur.filter((m) => m.id !== target.id));
+      const cached = warmData<SubjectStudent[]>("/api/subject_students");
+      if (cached) put("/api/subject_students", cached.filter((m) => m.id !== target.id));
+      toast("success", "Alumno quitado");
+      return;
     }
-    invalidateMany(["/api/subject_students", "/api/subjects", gradeKey]);
-    await load();
+
+    const res = await fetch(`/api/subject_grade_durations?id=${target.id}`, { method: "DELETE" });
+    setDeleting(false);
+    setConfirmTarget(null);
+    if (!res.ok) {
+      toast("error", (await res.json().catch(() => ({}))).error || "No se pudo borrar");
+      return;
+    }
+    const nextGrades = gradeDurations.filter((g) => g.id !== target.id);
+    setGradeDurations(nextGrades);
+    put(gradeKey, nextGrades);
+    toast("success", "Regla de curso eliminada");
   }
 
   const memberIds = new Set(members.map((m) => m.studentId));
@@ -512,8 +534,9 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     const data = await res.json();
     toast("success", `Curso añadido: ${data.enrolled} alumno(s) inscrito(s)${data.skipped ? `, ${data.skipped} ya estaban` : ""}`);
     setGradeOpen(false);
+    // Inscribe varios alumnos: refetch solo lo afectado, sin skeleton.
     invalidateMany(["/api/subject_students", gradeKey]);
-    await load();
+    void loadSilent();
   }
 
   async function removeGradeRule(ruleId: number, grade: string) {
@@ -563,7 +586,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     setAutoResultMode("applied");
     toast("success", `Horario actualizado: ${data.assigned.length} colocados, ${data.unassigned.length} sin colocar`);
     invalidateMany(["/api/assignments", "/api/subject_students"]);
-    await load();
+    void loadSilent();
   }
 
   async function autoScheduleSubject() {

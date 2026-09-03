@@ -24,7 +24,7 @@ import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import { ChipGroupSkeleton, MemberCardSkeleton } from "@/components/skeletons";
-import { warmData, put, invalidate, hasFresh, hasFreshAll, fetchApi, onCacheStale, queuePriorityWrite, flushPendingPriorityWrites } from "@/lib/clientCache";
+import { warmData, put, hasFresh, hasFreshAll, fetchApi, onCacheStale, queuePriorityWrite, flushPendingPriorityWrites } from "@/lib/clientCache";
 import { hasRequestsCache } from "@/lib/pageBoot";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { DAYS } from "@/lib/validate";
@@ -490,8 +490,13 @@ export default function RequestsClient() {
     setDeleting(false);
     setConfirmTarget(null);
     if (!res.ok) return toast("error", "No se pudo borrar");
-    invalidate("/api/slot_requests"); toast("success", "Preferencia borrada");
-    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { force: true });
+    const id = confirmTarget.id;
+    const nextLocal = slotRequests.filter((r) => r.id !== id);
+    setSlotRequests(nextLocal);
+    const cached = warmData<SlotRequest[]>("/api/slot_requests");
+    if (cached) put("/api/slot_requests", cached.filter((r) => r.id !== id));
+    else put("/api/slot_requests", nextLocal);
+    toast("success", "Preferencia borrada");
   }
 
   function openAdd(studentId: number) {
@@ -604,9 +609,12 @@ export default function RequestsClient() {
     });
     setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    invalidate("/api/slot_requests"); toast("success", "Preferencia añadida");
+    const created = (await res.json()) as SlotRequest;
+    setSlotRequests((cur) => [...cur, created]);
+    const cached = warmData<SlotRequest[]>("/api/slot_requests") ?? [];
+    put("/api/slot_requests", [...cached.filter((r) => r.id !== created.id), created]);
+    toast("success", "Preferencia añadida");
     setAddOpen(false);
-    await loadSubjectData(activeSubjectId, { force: true });
   }
 
   function openEdit(r: SlotRequest) {
@@ -651,9 +659,17 @@ export default function RequestsClient() {
     });
     setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    invalidate("/api/slot_requests"); toast("success", "Preferencia actualizada");
+    const updated = (await res.json()) as SlotRequest;
+    setSlotRequests((cur) => cur.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+    const cached = warmData<SlotRequest[]>("/api/slot_requests");
+    if (cached) {
+      put(
+        "/api/slot_requests",
+        cached.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)),
+      );
+    }
+    toast("success", "Preferencia actualizada");
     setEditOpen(false);
-    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { force: true });
   }
 
   const sortedMembers = useMemo(

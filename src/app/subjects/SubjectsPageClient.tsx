@@ -1,6 +1,6 @@
 "use client";
 
-import { warmData, put, invalidate, fetchApi, prefetchSubjectDetail } from "@/lib/clientCache";
+import { warmData, put, fetchApi, prefetchSubjectDetail } from "@/lib/clientCache";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -148,10 +148,14 @@ export default function SubjectsPageClient() {
       toast("error", err);
       return;
     }
+    const saved = (await res.json()) as Subject;
+    const next = editingId
+      ? (subjects ?? []).map((s) => (s.id === saved.id ? { ...s, ...saved } : s))
+      : [...(subjects ?? []), { ...saved, subjectStudents: [], subjectGradeDurations: [] }];
+    setSubjects(next);
+    put("/api/subjects", next);
     toast("success", editingId ? "Asignatura actualizada" : "Asignatura creada");
     closeForm();
-    invalidate("/api/subjects");
-    await load();
   }
 
   async function confirmDelete() {
@@ -159,14 +163,17 @@ export default function SubjectsPageClient() {
     setDeleting(true);
     const res = await fetch(`/api/subjects?id=${confirmId}`, { method: "DELETE" });
     setDeleting(false);
+    const id = confirmId;
     setConfirmId(null);
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       toast("error", d.error || "Error al borrar");
-    } else {
-      invalidate("/api/subjects"); toast("success", "Asignatura borrada");
+      return;
     }
-    await load();
+    const next = (subjects ?? []).filter((s) => s.id !== id);
+    setSubjects(next);
+    put("/api/subjects", next);
+    toast("success", "Asignatura borrada");
   }
 
   return (
