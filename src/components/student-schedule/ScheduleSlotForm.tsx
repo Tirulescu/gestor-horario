@@ -7,10 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DAYS } from "@/lib/validate";
-import { fmtHour, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END } from "@/lib/hours";
+import { endIfAfterStart, fmtHour, SCHEDULE_HOURS_START } from "@/lib/hours";
 
 const HOURS_START = SCHEDULE_HOURS_START;
-const HOURS_END = SCHEDULE_HOURS_END;
 
 interface ScheduleSlotFormProps {
   title?: { value: string; onChange: (value: string) => void; label: string; placeholder: string };
@@ -84,7 +83,7 @@ export default function ScheduleSlotForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <Label>{startLabel}</Label>
-          <Select value={start || undefined} onValueChange={onStartChange} disabled={days.size === 0 || hourSets.startSet.size === 0}>
+          <Select value={start || undefined} onValueChange={(v) => { onStartChange(v); onEndChange(endIfAfterStart(v, end)); }} disabled={days.size === 0 || hourSets.startSet.size === 0}>
             <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
             <SelectContent>
               {HOURS_START.map((o) => hourItem(o, hourSets.startSet))}

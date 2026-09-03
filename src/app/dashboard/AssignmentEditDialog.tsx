@@ -97,7 +97,7 @@ export default function AssignmentEditDialog({
               </div>
               <div>
                 <Label htmlFor="tb-2">Hora de inicio</Label>
-                <Select value={editAsgStart} onValueChange={onEditAsgStartChange}>
+                <Select value={editAsgStart || undefined} onValueChange={onEditAsgStartChange}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
                     {HOURS_START.map((o) => hourItem(o, editHourSets.startSet))}
@@ -106,7 +106,7 @@ export default function AssignmentEditDialog({
               </div>
               <div>
                 <Label htmlFor="tb-3">Hora de fin</Label>
-                <Select value={editAsgEnd} onValueChange={onEditAsgEndChange} disabled={editHourSets.endSet.size === 0}>
+                <Select value={editAsgEnd || undefined} onValueChange={onEditAsgEndChange} disabled={editHourSets.endSet.size === 0}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
                     {Array.from(editHourSets.endSet)
@@ -120,7 +120,7 @@ export default function AssignmentEditDialog({
             </div>
             {editHourSets.startSet.size === 0 && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-                No hay hueco libre ese día (chocaría con otras clases, bloqueos o reservas).
+                No hay hueco libre ese día (chocaría con otras clases o bloqueos).
               </p>
             )}
             {durationMin != null && (

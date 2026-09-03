@@ -60,7 +60,7 @@ export async function validateAssignmentSlot(params: {
   });
   for (const b of blocks) {
     if (overlaps(dayOfWeek, startHour, endHour, b.dayOfWeek, b.startHour, b.endHour)) {
-      return "Ese horario choca con una reserva del profesor";
+      return "Ese horario choca con un bloqueo del profesor";
     }
   }
 

@@ -60,7 +60,7 @@ export default function OnboardingChecklist({
       action:
         step.id === "availability" && onOpenAvailability ? (
           <Button size="sm" variant="outline" type="button" onClick={onOpenAvailability}>
-            Añadir al horario
+            Añadir al calendario
           </Button>
         ) : step.id === "schedule" && onAutoSchedule ? (
           <Button size="sm" type="button" onClick={onAutoSchedule}>

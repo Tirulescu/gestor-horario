@@ -79,9 +79,9 @@ export default function ConfirmDeleteDialogs({
       <AlertDialog open={confirmTb != null} onOpenChange={(o) => { if (!o && !deleting) onConfirmTbOpenChange(false); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Quitar evento</AlertDialogTitle>
+            <AlertDialogTitle>Eliminar bloqueo</AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmTb ? `¿Quitar el evento "${confirmTb.title}" del ${DAYS[confirmTb.dayOfWeek]} ${fmtRange(confirmTb.startHour, confirmTb.endHour)}?` : ""}
+              {confirmTb ? `¿Eliminar el bloqueo "${confirmTb.title}" del ${DAYS[confirmTb.dayOfWeek]} ${fmtRange(confirmTb.startHour, confirmTb.endHour)}?` : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -93,7 +93,7 @@ export default function ConfirmDeleteDialogs({
                 void onDeleteTeacherBlock();
               }}
             >
-              Quitar
+              Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

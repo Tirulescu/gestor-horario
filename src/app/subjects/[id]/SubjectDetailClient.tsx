@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
 import { fmtDurationMin, collectSubjectDurationOptions, SESSION_PART_MIN, maxSessionParts, MIN_DURATION_MIN, DURATION_STEP_MIN } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
-import { fetchApi, invalidate, invalidateMany, onCacheStale, put, subjectGradeKey, warmData, queuePriorityWrite, clearPriorityWrites, flushPendingPriorityWrites } from "@/lib/clientCache";
+import { fetchApi, invalidate, invalidateMany, onCacheStale, put, subjectGradeKey, warmData, queuePriorityWrite, flushPendingPriorityWrites } from "@/lib/clientCache";
 import { SubjectDetailSkeleton } from "@/components/skeletons";
 import { COPY } from "@/lib/copy";
 import type { ConfirmTarget, GradeDuration, SlotRequest, Student, Subject, SubjectStudent } from "./types";
@@ -712,7 +712,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
           <div className="text-gray-500 text-sm">Sin alumnos inscritos</div>
         ) : teacherScheduleFixed ? (
           <div className="space-y-2">
-            {sortedMembers.map((m, mi) => {
+            {sortedMembers.map((m) => {
               const reqs = requestsByStudent[m.studentId] ?? [];
               return (
                 <MemberRow key={m.id} m={m} readOnly className="flex items-center">

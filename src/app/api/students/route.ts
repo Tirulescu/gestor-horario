@@ -95,7 +95,8 @@ export async function PUT(req: NextRequest) {
       ? normalizeRanges(body.availableRanges)
       : normalizeRanges(current?.availableRanges);
 
-  // Disponibilidad y bloqueos no pueden solapar: se recorta la disponibilidad.
+  // Disponibilidad y bloqueos del alumno no pueden solapar: se recorta la disponibilidad.
+  // Las otras asignaturas no recortan disponibilidad.
   if (body.blockedRanges !== undefined || body.availableRanges !== undefined) {
     available = carveAvailabilityAroundBlocked(available, blocked);
     if (body.blockedRanges !== undefined) patch.blockedRanges = blocked;

@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DAYS } from "@/lib/validate";
-import { fmtDayRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END } from "@/lib/hours";
+import { fmtDayRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, endIfAfterStart } from "@/lib/hours";
 import {
   getFreeHourSetsForDays,
   slotOverlapsBlocked,
@@ -143,7 +143,7 @@ export default function TeacherScheduleManageDialog({
   /* ─ Add availability ─ */
   async function submitAvail() {
     if (avDays.size === 0) { setAddErr("Selecciona al menos un día"); return; }
-    if (avHourSets.startSet.size === 0) { setAddErr("No hay horas libres en los días seleccionados. Hay eventos que ocupan todo el horario."); return; }
+    if (avHourSets.startSet.size === 0) { setAddErr("No hay horas libres en los días seleccionados. Hay bloqueos que ocupan todo el horario."); return; }
     if (!avStart || !avEnd) { setAddErr("Selecciona inicio y fin"); return; }
     const s = Number(avStart), e = Number(avEnd);
     if (!(e > s)) { setAddErr("La hora de fin debe ser posterior"); return; }
@@ -151,7 +151,7 @@ export default function TeacherScheduleManageDialog({
     for (const day of avDays) {
       if (slotOverlapsBlocked(day, s, e, blockedRanges)) {
         const hit = teacherBlocks.find((b) => b.dayOfWeek === day && b.endHour > s && b.startHour < e);
-        setAddErr(`Choca con ${hit?.title ?? "un evento"} el ${DAYS[day]}`);
+        setAddErr(`Choca con ${hit?.title ?? "un bloqueo"} el ${DAYS[day]}`);
         return;
       }
       adds.push({ day, start: s, end: e });
@@ -168,7 +168,7 @@ export default function TeacherScheduleManageDialog({
   async function submitBlock() {
     if (!blkTitle.trim()) { setAddErr("El motivo es obligatorio"); return; }
     if (blkDays.size === 0) { setAddErr("Selecciona al menos un día"); return; }
-    if (blkHourSets.startSet.size === 0) { setAddErr("No hay horas libres en los días seleccionados. Hay eventos o clases que ocupan todo el horario."); return; }
+    if (blkHourSets.startSet.size === 0) { setAddErr("No hay horas libres en los días seleccionados. Hay bloqueos o clases que ocupan todo el horario."); return; }
     if (!blkStart || !blkEnd) { setAddErr("Selecciona inicio y fin"); return; }
     const s = Number(blkStart), e = Number(blkEnd);
     if (!(e > s)) { setAddErr("La hora de fin debe ser posterior"); return; }
@@ -229,7 +229,7 @@ export default function TeacherScheduleManageDialog({
             <CalendarClock size={18} className="text-blue-600" />
             {view === "main" && "Mi calendario"}
             {view === "add-avail" && "Añadir disponibilidad"}
-            {view === "add-block" && "Añadir evento"}
+            {view === "add-block" && "Añadir bloqueo"}
           </DialogTitle>
         </DialogHeader>
 
@@ -270,16 +270,16 @@ export default function TeacherScheduleManageDialog({
 
               <hr className="border-gray-100" />
 
-              {/* Eventos / Bloqueos */}
+              {/* Bloqueos */}
               <section className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label className="text-sm font-semibold">Eventos / Bloqueos</Label>
+                  <Label className="text-sm font-semibold">Bloqueos</Label>
                   <Button type="button" variant="outline" size="sm" onClick={() => { resetBlkForm(); setView("add-block"); }}>
                     <Plus size={14} /> Añadir
                   </Button>
                 </div>
                 {teacherBlocks.length === 0 ? (
-                  <p className="text-xs text-gray-500">Sin eventos.</p>
+                  <p className="text-xs text-gray-500">Sin bloqueos.</p>
                 ) : (
                   <div className="space-y-1.5">
                     {teacherBlocks.map((b) => {
@@ -366,14 +366,14 @@ export default function TeacherScheduleManageDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Desde</Label>
-                  <Select value={avStart || undefined} onValueChange={setAvStart} disabled={avDays.size === 0}>
+                  <Select value={avStart || undefined} onValueChange={(v) => { setAvStart(v); setAvEnd((e) => endIfAfterStart(v, e)); }} disabled={avDays.size === 0 || avHourSets.startSet.size === 0}>
                     <SelectTrigger><SelectValue placeholder="…" /></SelectTrigger>
                     <SelectContent>{HOURS_START.map((o) => hourItem(o, avHourSets.startSet))}</SelectContent>
                   </Select>
                 </div>
                 <div>
                   <Label>Hasta</Label>
-                  <Select value={avEnd || undefined} onValueChange={setAvEnd} disabled={!avStart}>
+                  <Select value={avEnd || undefined} onValueChange={setAvEnd} disabled={!avStart || avHourSets.endSet.size === 0}>
                     <SelectTrigger><SelectValue placeholder="…" /></SelectTrigger>
                     <SelectContent>{HOURS_END.map((o) => hourItem(o, avHourSets.endSet))}</SelectContent>
                   </Select>
@@ -383,7 +383,7 @@ export default function TeacherScheduleManageDialog({
             </div>
           )}
 
-          {/* ══════ AÑADIR EVENTO ══════ */}
+          {/* ══════ AÑADIR BLOQUEO ══════ */}
           {view === "add-block" && (
             <div className="space-y-3">
               <div>
@@ -403,7 +403,7 @@ export default function TeacherScheduleManageDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Desde</Label>
-                  <Select value={blkStart || undefined} onValueChange={setBlkStart} disabled={blkDays.size === 0 || blkHourSets.startSet.size === 0}>
+                  <Select value={blkStart || undefined} onValueChange={(v) => { setBlkStart(v); setBlkEnd((e) => endIfAfterStart(v, e)); }} disabled={blkDays.size === 0 || blkHourSets.startSet.size === 0}>
                     <SelectTrigger><SelectValue placeholder="…" /></SelectTrigger>
                     <SelectContent>{HOURS_START.map((o) => hourItem(o, blkHourSets.startSet))}</SelectContent>
                   </Select>
@@ -434,7 +434,7 @@ export default function TeacherScheduleManageDialog({
           {view === "add-block" && (
             <>
               <Button variant="outline" onClick={goBack} disabled={busy}><X size={14} /> Cancelar</Button>
-              <Button onClick={submitBlock} loading={busy}><Plus size={14} /> Añadir evento{blkDays.size > 1 ? "s" : ""}</Button>
+              <Button onClick={submitBlock} loading={busy}><Plus size={14} /> Añadir bloqueo{blkDays.size > 1 ? "s" : ""}</Button>
             </>
           )}
         </DialogFooter>
@@ -451,7 +451,7 @@ export default function TeacherScheduleManageDialog({
       )}
       {editingBlock && (
         <EditDialog
-          open title="Editar evento" iconColor="text-blue-600"
+          open title="Editar bloqueo" iconColor="text-blue-600"
           onOpenChange={(o) => { if (!o) setEditBlockId(null); }}
           initial={{
             title: blockEdits[editingBlock.id]?.title ?? editingBlock.title,
@@ -494,7 +494,7 @@ function EditDialog({ open, onOpenChange, title: dlgTitle, iconColor, initial, s
           {showTitle && <div><Label>Motivo</Label><Input value={titleVal} onChange={(e) => setTitleVal(e.target.value)} placeholder="Ej: Reunión" /></div>}
           <div><Label>Día</Label><Select value={day} onValueChange={setDay}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{DAYS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}</SelectContent></Select></div>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>Inicio</Label><Select value={start || undefined} onValueChange={setStart}><SelectTrigger><SelectValue placeholder="…" /></SelectTrigger><SelectContent>{SCHEDULE_HOURS_START.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent></Select></div>
+            <div><Label>Inicio</Label><Select value={start || undefined} onValueChange={(v) => { setStart(v); setEnd((e) => endIfAfterStart(v, e)); }}><SelectTrigger><SelectValue placeholder="…" /></SelectTrigger><SelectContent>{SCHEDULE_HOURS_START.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent></Select></div>
             <div><Label>Fin</Label><Select value={end || undefined} onValueChange={setEnd} disabled={!start}><SelectTrigger><SelectValue placeholder="…" /></SelectTrigger><SelectContent>{endOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent></Select></div>
           </div>
           {err && <p className="text-sm text-red-600">{err}</p>}

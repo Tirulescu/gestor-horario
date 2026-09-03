@@ -9,7 +9,7 @@ import {
 } from "./hours";
 import { mergeIntervals } from "./scheduleIntervals";
 import { MAX_SCHEDULE_RANGES } from "./validate";
-/** `class` = clase del centro que no impartes; `block` = actividad fuera del centro. */
+/** `class` = otra asignatura que no impartes; `block` = actividad fuera del centro. */
 export type OccupancyKind = "block" | "class";
 
 /** Franja horaria semanal: day 0=Lun … 6=Dom, start/end en horas decimales. */
@@ -17,10 +17,6 @@ export type TimeRange = { day: number; start: number; end: number; title?: strin
 
 export function isExternalClass(r: TimeRange): boolean {
   return r.kind === "class";
-}
-
-export function isActivityBlock(r: TimeRange): boolean {
-  return r.kind !== "class";
 }
 
 export const EXTERNAL_CLASS_COLOR = "#0f766e";
@@ -96,7 +92,7 @@ function intersect(a: { start: number; end: number }, b: { start: number; end: n
 }
 
 /** Resta intervalos ocupados de una lista de franjas del mismo día. */
-export function subtractBlockedFromDayRanges(
+function subtractBlockedFromDayRanges(
   ranges: { start: number; end: number }[],
   blocked: { start: number; end: number }[],
 ): { start: number; end: number }[] {
@@ -117,7 +113,7 @@ export function subtractBlockedFromDayRanges(
 }
 
 /** Fusiona franjas del mismo día que se solapan o tocan. */
-export function mergeAdjacentTimeRanges(ranges: TimeRange[]): TimeRange[] {
+function mergeAdjacentTimeRanges(ranges: TimeRange[]): TimeRange[] {
   const byDay = new Map<number, { start: number; end: number }[]>();
   for (const r of ranges) {
     const list = byDay.get(r.day) ?? [];
@@ -134,7 +130,9 @@ export function mergeAdjacentTimeRanges(ranges: TimeRange[]): TimeRange[] {
 }
 
 /**
- * Recorta/divide disponibilidad para que no solape con bloqueos.
+ * Recorta/divide disponibilidad para que no solape con bloqueos (`kind: "block"`).
+ * Las otras asignaturas (`kind: "class"`) ocupan al alumno al agendar, pero no
+ * recortan su disponibilidad ni la del profesor.
  * Ej.: disponible 10–14 y bloqueo 12–13 → 10–12 y 13–14.
  */
 export function carveAvailabilityAroundBlocked(
@@ -142,7 +140,9 @@ export function carveAvailabilityAroundBlocked(
   blocked: TimeRange[],
 ): TimeRange[] {
   const avail = normalizeRanges(available);
-  const blocks = normalizeRanges(blocked);
+  const blocks = normalizeBlockedRanges(blocked)
+    .filter((b) => !isExternalClass(b))
+    .map((b) => ({ day: b.day, start: b.start, end: b.end }));
   if (blocks.length === 0) return mergeAdjacentTimeRanges(avail);
   const out: TimeRange[] = [];
   for (const a of avail) {
@@ -157,7 +157,7 @@ export function carveAvailabilityAroundBlocked(
 }
 
 /** Intersección profesor ∩ alumno, restando bloqueos del alumno. */
-export function getEffectiveRangesForDay(
+function getEffectiveRangesForDay(
   day: number,
   teacherAvails: { dayOfWeek: number; startHour: number; endHour: number }[],
   studentAvailable: TimeRange[],
@@ -217,7 +217,7 @@ export function freeWithinStudentAvailability(
   return result;
 }
 
-export function allowedHourSet(
+function allowedHourSet(
   ranges: { start: number; end: number }[],
   hourOpts: { value: string; label: string }[],
   kind: "start" | "end",
@@ -315,7 +315,7 @@ export function teacherAvailsToRanges(
  * Horas válidas. Si `maxDurationMin` está definido, el fin puede ser cualquier parte
  * ≤ ese máximo (p. ej. 30 o 60 para una clase de 60 min).
  */
-export function getSlotHourSetsFromRanges(
+function getSlotHourSetsFromRanges(
   ranges: { start: number; end: number }[],
   hoursStart: { value: string; label: string }[],
   hoursEnd: { value: string; label: string }[],
@@ -362,7 +362,7 @@ export function getSlotHourSetsFromRanges(
 }
 
 /** Huecos libres en un día restando bloqueos (ventana del calendario por defecto). */
-export function getFreeRangesExcludingBlocked(
+function getFreeRangesExcludingBlocked(
   day: number,
   blocked: TimeRange[],
   windowStart = SCHEDULE_DAY_START,

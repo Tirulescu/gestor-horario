@@ -138,10 +138,17 @@ export default function StudentScheduleManageDialog({
     const occupied: TimeRange[] = [
       ...targets.flatMap((st) => effectiveBlocked(st)),
     ];
-    if (action === "event") {
+    if (action === "event" && eventType === "subject") {
       occupied.push(
         ...teacherBlocks.map((b) => ({ day: b.dayOfWeek, start: b.startHour, end: b.endHour })),
         ...assignments.map((a) => ({ day: a.dayOfWeek, start: a.startHour, end: a.endHour })),
+      );
+    } else {
+      const targetIds = new Set(targets.map((st) => st.id));
+      occupied.push(
+        ...assignments
+          .filter((a) => targetIds.has(a.studentId))
+          .map((a) => ({ day: a.dayOfWeek, start: a.startHour, end: a.endHour })),
       );
     }
     return getFreeHourSetsForDays(
@@ -351,7 +358,7 @@ export default function StudentScheduleManageDialog({
                   Mi asignatura
                 </button>
                 <button type="button" onClick={() => setEventType("external")} className={`chip ${eventType === "external" ? "chip-active" : ""}`}>
-                  Otra del centro
+                  Otra asignatura
                 </button>
               </div>
             </div>

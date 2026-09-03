@@ -21,7 +21,7 @@ import FloatingActionButton from "@/components/FloatingActionButton";
 import { TableCardSkeleton } from "@/components/skeletons";
 import { warmData, put, invalidate, invalidateMany, hasFreshAll, STUDENTS_ENDPOINTS, fetchApi, onCacheStale } from "@/lib/clientCache";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
-import { fmtDayRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END } from "@/lib/hours";
+import { fmtDayRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, endIfAfterStart } from "@/lib/hours";
 import { DAYS } from "@/lib/validate";
 import StudentScheduleViewDialog from "@/components/StudentScheduleViewDialog";
 import StudentScheduleManageDialog from "@/components/StudentScheduleManageDialog";
@@ -112,6 +112,9 @@ export default function StudentsClient() {
   const [manageStudentId, setManageStudentId] = useState<number | null>(null);
   const [allBlocksOpen, setAllBlocksOpen] = useState(false);
   const [calendarInitialView, setCalendarInitialView] = useState<"blocks" | "events">("blocks");
+  const [calEditId, setCalEditId] = useState<number | null>(null);
+  const [calDeleteId, setCalDeleteId] = useState<number | null>(null);
+  const [calDeleting, setCalDeleting] = useState(false);
 
   const [confirmDel, setConfirmDel] = useState<Student | null>(null);
   const [saving, setSaving] = useState(false);
@@ -293,75 +296,6 @@ export default function StudentsClient() {
     return res.ok;
   }
 
-  async function applyAvailabilityChanges(args: {
-    removes: { student: Student; ranges: TimeRange[] }[];
-    targets: Student[];
-    adds: TimeRange[];
-  }): Promise<boolean> {
-    setSaving(true);
-    let removed = 0;
-    let addedStudents = 0;
-    try {
-      const blockedAfterRemove = new Map<number, TimeRange[]>();
-      const availableAfterRemove = new Map<number, TimeRange[]>();
-
-      for (const { student, ranges } of args.removes) {
-        if (ranges.length === 0) continue;
-        const drop = new Set(ranges.map((r) => `${r.day}:${r.start}:${r.end}`));
-        const nextAvail = (student.availableRanges ?? []).filter(
-          (r) => !drop.has(`${r.day}:${r.start}:${r.end}`),
-        );
-        const ok = await updateStudentRanges(student, { availableRanges: nextAvail });
-        if (!ok) {
-          toast("error", "No se pudo quitar la franja");
-          return false;
-        }
-        removed += ranges.length;
-        availableAfterRemove.set(student.id, nextAvail);
-        blockedAfterRemove.set(student.id, student.blockedRanges ?? []);
-      }
-
-      if (args.adds.length > 0) {
-        for (const st of args.targets) {
-          const cur = availableAfterRemove.get(st.id) ?? st.availableRanges ?? [];
-          const blocked = blockedAfterRemove.get(st.id) ?? st.blockedRanges ?? [];
-          const carved = carveAvailabilityAroundBlocked([...cur, ...args.adds], blocked);
-          const changed =
-            carved.length !== cur.length ||
-            carved.some((r, i) => !cur[i] || r.day !== cur[i].day || r.start !== cur[i].start || r.end !== cur[i].end);
-          if (!changed) continue;
-          const ok = await updateStudentRanges(st, { availableRanges: carved });
-          if (!ok) {
-            toast("error", "No se pudo guardar la disponibilidad");
-            return false;
-          }
-          addedStudents++;
-        }
-      }
-
-      const parts: string[] = [];
-      if (removed > 0) parts.push(removed === 1 ? "1 franja quitada" : `${removed} franjas quitadas`);
-      if (addedStudents > 0) {
-        parts.push(
-          addedStudents === 1
-            ? "disponibilidad añadida"
-            : `disponibilidad añadida a ${addedStudents} alumno(s)`,
-        );
-      }
-      toast(
-        "success",
-        parts.length === 0
-          ? "Cambios guardados"
-          : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
-      );
-      invalidate("/api/students");
-      void load({ force: true });
-      return true;
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function applyBlockChanges(args: {
     removes: { student: Student; indices: number[] }[];
     targets: Student[];
@@ -380,7 +314,7 @@ export default function StudentsClient() {
         const nextBlocked = (student.blockedRanges ?? []).filter((_, i) => !drop.has(i));
         const ok = await updateStudentRanges(student, { blockedRanges: nextBlocked });
         if (!ok) {
-          toast("error", "No se pudo quitar el bloqueo");
+          toast("error", "No se pudo quitar la ocupación");
           return false;
         }
         removed += indices.length;
@@ -416,20 +350,25 @@ export default function StudentsClient() {
             availableRanges: nextAvailable,
           });
           if (!ok) {
-            toast("error", "No se pudo guardar el bloqueo");
+            toast("error", "No se pudo guardar la ocupación");
             return false;
           }
           addedStudents++;
         }
       }
 
+      const addedAreClasses = args.adds.length > 0 && args.adds.every((r) => r.kind === "class");
       const parts: string[] = [];
-      if (removed > 0) parts.push(removed === 1 ? "1 bloqueo quitado" : `${removed} bloqueos quitados`);
+      if (removed > 0) parts.push(removed === 1 ? "1 ocupación quitada" : `${removed} ocupaciones quitadas`);
       if (addedStudents > 0) {
         parts.push(
-          addedStudents === 1
-            ? "bloqueo añadido"
-            : `bloqueos añadidos (${addedStudents} alumno(s))`,
+          addedAreClasses
+            ? (addedStudents === 1
+              ? "otra asignatura añadida"
+              : `otras asignaturas añadidas (${addedStudents} alumno(s))`)
+            : (addedStudents === 1
+              ? "bloqueo añadido"
+              : `bloqueos añadidos (${addedStudents} alumno(s))`),
         );
       }
       toast(
@@ -688,6 +627,21 @@ export default function StudentsClient() {
     void load({ force: true });
   }
 
+  async function doCalendarDelete() {
+    if (calDeleteId == null || calDeleting) return;
+    setCalDeleting(true);
+    const res = await fetch(`/api/assignments?id=${calDeleteId}`, { method: "DELETE" });
+    setCalDeleting(false);
+    setCalDeleteId(null);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      return toast("error", d.error || "No se pudo eliminar la clase");
+    }
+    toast("success", "Clase eliminada");
+    invalidateMany(["/api/assignments", "/api/subject_students"]);
+    void load({ force: true });
+  }
+
   async function doDelete() {
     if (!confirmDel || deleting) return;
     setDeleting(true);
@@ -847,7 +801,7 @@ export default function StudentsClient() {
                   ) : (
                     (s.blockedRanges ?? []).map((b, i) => (
                       <Badge key={i} variant={isExternalClass(b) ? "gray" : "danger"} className="font-normal whitespace-normal text-left leading-snug">
-                        {isExternalClass(b) ? "Clase · " : "Bloqueo · "}
+                        {isExternalClass(b) ? "Otra asignatura · " : "Bloqueo · "}
                         {b.title?.trim() ? `${b.title.trim()} · ` : ""}{fmtDayRange(b.day, b.start, b.end)}
                       </Badge>
                     ))
@@ -1000,7 +954,7 @@ export default function StudentsClient() {
                           >
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium truncate">
-                                {isExternalClass(shown) ? "Clase · " : "Bloqueo · "}
+                                {isExternalClass(shown) ? "Otra asignatura · " : "Bloqueo · "}
                                 {shown.title?.trim() ? `${shown.title.trim()} · ` : ""}
                                 {fmtDayRange(shown.day, shown.start, shown.end)}
                               </p>
@@ -1225,7 +1179,70 @@ export default function StudentsClient() {
         subjects={subjects}
         assignments={assignments}
         initialView={calendarInitialView}
+        onEditAssignment={(id) => setCalEditId(id)}
+        onDeleteAssignment={(id) => setCalDeleteId(id)}
       />
+
+      {/* Confirmar borrado de clase desde el calendario */}
+      <AlertDialog open={calDeleteId !== null} onOpenChange={(o) => { if (!o && !calDeleting) setCalDeleteId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar clase</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Seguro que quieres eliminar esta clase?
+              {(() => {
+                const a = assignments.find((x) => x.id === calDeleteId);
+                if (!a) return null;
+                const sName = a.student?.name ?? students?.find((s) => s.id === a.studentId)?.name ?? "";
+                const subName = a.subject?.name ?? subjects.find((s) => s.id === a.subjectId)?.name ?? "";
+                return <> (<strong>{subName}</strong> — {sName})</>;
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={calDeleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              loading={calDeleting}
+              onClick={(e) => {
+                e.preventDefault();
+                void doCalendarDelete();
+              }}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Editar clase desde el calendario */}
+      {calEditId != null && assignments.find((a) => a.id === calEditId) && (
+        <AssignmentEditDialog
+          open={calEditId != null}
+          onOpenChange={(o) => { if (!o) setCalEditId(null); }}
+          assignment={assignments.find((a) => a.id === calEditId)!}
+          subjectName={
+            assignments.find((a) => a.id === calEditId)?.subject?.name ??
+            subjects.find((x) => x.id === assignments.find((a) => a.id === calEditId)!.subjectId)?.name ??
+            "Asignatura"
+          }
+          onSave={async (next) => {
+            const res = await fetch("/api/assignments", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: calEditId, ...next }),
+            });
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({}));
+              toast("error", d.error || "No se pudo guardar");
+              return;
+            }
+            toast("success", "Clase actualizada");
+            setCalEditId(null);
+            invalidateMany(["/api/assignments", "/api/subject_students"]);
+            void load({ force: true });
+          }}
+        />
+      )}
 
       <AlertDialog open={confirmDel !== null} onOpenChange={(o) => { if (!o && !deleting) setConfirmDel(null); }}>
         <AlertDialogContent>
@@ -1315,7 +1332,7 @@ function AvailabilityEditDialog({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Hora inicio</Label>
-              <Select value={start || undefined} onValueChange={setStart}>
+              <Select value={start || undefined} onValueChange={(v) => { setStart(v); setEnd((e) => endIfAfterStart(v, e)); }}>
                 <SelectTrigger>
                   <SelectValue placeholder="Selecciona…" />
                 </SelectTrigger>
@@ -1427,7 +1444,7 @@ function BlockedRangeEditDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="block">Bloqueo</SelectItem>
-                <SelectItem value="class">Clase del centro</SelectItem>
+                <SelectItem value="class">Otra asignatura</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1460,7 +1477,7 @@ function BlockedRangeEditDialog({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Hora inicio</Label>
-              <Select value={start || undefined} onValueChange={setStart}>
+              <Select value={start || undefined} onValueChange={(v) => { setStart(v); setEnd((e) => endIfAfterStart(v, e)); }}>
                 <SelectTrigger>
                   <SelectValue placeholder="Selecciona…" />
                 </SelectTrigger>
@@ -1599,7 +1616,7 @@ function AssignmentEditDialog({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Hora inicio</Label>
-              <Select value={start || undefined} onValueChange={setStart}>
+              <Select value={start || undefined} onValueChange={(v) => { setStart(v); setEnd((e) => endIfAfterStart(v, e)); }}>
                 <SelectTrigger>
                   <SelectValue placeholder="Selecciona…" />
                 </SelectTrigger>

@@ -102,7 +102,7 @@ export default function SetupGuidePanel() {
               ? "Consulta los pasos mientras se calcula tu progreso."
               : allDone
                 ? "¡Tu horario está configurado! Puedes consultar estos pasos cuando quieras."
-                : "Sigue estos pasos en orden para dejar listo tu horario escolar."}
+                : "Sigue estos pasos en orden para dejar listo tu horario. Puedes anotar también otras materias del conservatorio y actividades externas; el auto-agendado se centra en las tuyas."}
           </p>
         </div>
         <div

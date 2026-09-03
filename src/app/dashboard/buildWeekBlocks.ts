@@ -10,11 +10,11 @@ export function buildTeacherBlockBlocks(teacherBlocks: TeacherBlock[]): WeekBloc
     startHour: b.startHour,
     endHour: b.endHour,
     title: b.title,
-    subtitle: "evento",
+    subtitle: "bloqueo",
     color: "#475569",
     detailTitle: b.title,
     details: [
-      { label: "Tipo", value: "Evento" },
+      { label: "Tipo", value: "Bloqueo" },
       { label: "Día", value: DAYS[b.dayOfWeek] },
       { label: "Horario", value: fmtRange(b.startHour, b.endHour) },
     ],

@@ -10,7 +10,9 @@ import { fmtDayRange, fmtRange, fmtDurationMin, SCHEDULE_DAY_START, SCHEDULE_DAY
 import { DAYS } from "@/lib/validate";
 import { useHideWeekends } from "@/lib/useTeacherProfile";
 import {
+  EXTERNAL_CLASS_COLOR,
   isExternalClass,
+  normalizeBlockedRanges,
   rangesToZones,
   teacherAvailsToRanges,
   unavailableOutsideAvailable,
@@ -62,7 +64,12 @@ export default function StudentScheduleViewDialog({
   const subjectColor = useMemo(() => buildSubjectColorMap(subjects), [subjects]);
 
   const ranges = student?.availableRanges ?? [];
-  const blocked = student?.blockedRanges ?? [];
+  const occupancy = useMemo(
+    () => normalizeBlockedRanges(student?.blockedRanges),
+    [student?.blockedRanges],
+  );
+  const blocked = occupancy.filter((r) => !isExternalClass(r));
+  const externalClasses = occupancy.filter(isExternalClass);
 
   const assignmentBlocks: WeekBlock[] = useMemo(
     () => assignments.map((a) => {
@@ -88,6 +95,58 @@ export default function StudentScheduleViewDialog({
     [assignments, subjects, subjectColor, student?.name],
   );
 
+  const externalClassBlocks: WeekBlock[] = useMemo(
+    () => externalClasses.map((r, i) => {
+      const name = r.title?.trim() || "Otra asignatura";
+      return {
+        id: -(i + 1),
+        dayOfWeek: r.day,
+        startHour: r.start,
+        endHour: r.end,
+        title: name,
+        subtitle: undefined,
+        color: EXTERNAL_CLASS_COLOR,
+        detailTitle: name,
+        details: [
+          { label: "Alumno", value: student?.name ?? "—" },
+          { label: "Tipo", value: "Otra asignatura" },
+          { label: "Día", value: DAYS[r.day] },
+          { label: "Horario", value: fmtRange(r.start, r.end) },
+        ],
+      };
+    }),
+    [externalClasses, student?.name],
+  );
+
+  const blockedBlocks: WeekBlock[] = useMemo(
+    () => blocked.map((r, i) => {
+      const name = r.title?.trim() || "Bloqueo";
+      return {
+        id: -(1000 + i + 1),
+        dayOfWeek: r.day,
+        startHour: r.start,
+        endHour: r.end,
+        title: name,
+        subtitle: undefined,
+        color: "#ef4444",
+        detailTitle: name,
+        details: [
+          { label: "Alumno", value: student?.name ?? "—" },
+          { label: "Tipo", value: "Bloqueo" },
+          { label: "Nombre", value: name },
+          { label: "Día", value: DAYS[r.day] },
+          { label: "Horario", value: fmtRange(r.start, r.end) },
+        ],
+      };
+    }),
+    [blocked, student?.name],
+  );
+
+  const blocks = useMemo(
+    () => [...assignmentBlocks, ...externalClassBlocks, ...blockedBlocks],
+    [assignmentBlocks, externalClassBlocks, blockedBlocks],
+  );
+
   const teacherRanges = useMemo(
     () => teacherAvailsToRanges(teacherAvailabilities),
     [teacherAvailabilities],
@@ -99,7 +158,8 @@ export default function StudentScheduleViewDialog({
       items.push({ label: "Profesor no disponible", color: "#94a3b8", striped: true });
     }
     if (ranges.length > 0) items.push({ label: "Disponible (alumno)", color: "#22c55e", dashed: true });
-    if (blocked.length > 0) items.push({ label: "Ocupaciones", color: "#ef4444" });
+    if (blocked.length > 0) items.push({ label: "Bloqueos", color: "#ef4444" });
+    if (externalClasses.length > 0) items.push({ label: "Otras asignaturas", color: EXTERNAL_CLASS_COLOR });
     const scheduledIds = new Set(assignments.map((a) => a.subjectId));
     for (const sub of subjects) {
       if (scheduledIds.has(sub.id)) {
@@ -107,10 +167,9 @@ export default function StudentScheduleViewDialog({
       }
     }
     return items;
-  }, [teacherRanges.length, ranges.length, blocked.length, assignments, subjects, subjectColor]);
+  }, [teacherRanges.length, ranges.length, blocked.length, externalClasses.length, assignments, subjects, subjectColor]);
 
   const availZones = useMemo(() => rangesToZones(ranges), [ranges]);
-  const blockedZones = useMemo(() => rangesToZones(blocked), [blocked]);
   const unavail = useMemo(
     () => unavailableOutsideAvailable(teacherRanges, SCHEDULE_DAY_START, SCHEDULE_DAY_END),
     [teacherRanges],
@@ -136,15 +195,14 @@ export default function StudentScheduleViewDialog({
             inDialog
             allowFullscreen
             fullscreenTitle={student ? `Horario de ${student.name}` : "Horario del alumno"}
-            blocks={assignmentBlocks}
+            blocks={blocks}
             availableZones={availZones}
-            blockedZones={blockedZones}
             unavailable={unavail}
             showLegend
             legend={legend}
           />
 
-          {(ranges.length > 0 || blocked.length > 0 || assignments.length > 0) && (
+          {(ranges.length > 0 || occupancy.length > 0 || assignments.length > 0) && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               {ranges.length > 0 && (
                 <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3 space-y-1.5">
@@ -160,20 +218,21 @@ export default function StudentScheduleViewDialog({
               )}
               {blocked.length > 0 && (
                 <div className="rounded-lg border border-red-100 bg-red-50/60 p-3 space-y-1.5">
-                  <p className="font-medium text-red-900">Ocupaciones</p>
+                  <p className="font-medium text-red-900">Bloqueos</p>
                   <div className="flex flex-wrap gap-1">
                     {blocked.map((r, i) => (
                       <span key={i} className="rounded-full bg-white/80 border border-red-200 px-2 py-0.5 text-red-800">
-                        {isExternalClass(r) ? "Clase · " : "Bloqueo · "}
-                        {r.title?.trim() ? `${r.title.trim()} · ` : ""}{fmtDayRange(r.day, r.start, r.end)}
+                        {r.title?.trim() || "Bloqueo"}
+                        {" · "}
+                        {fmtDayRange(r.day, r.start, r.end)}
                       </span>
                     ))}
                   </div>
                 </div>
               )}
-              {assignments.length > 0 && (
+              {(assignments.length > 0 || externalClasses.length > 0) && (
                 <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3 space-y-1.5 sm:col-span-1">
-                  <p className="font-medium text-blue-900">Clases ({assignments.length})</p>
+                  <p className="font-medium text-blue-900">Clases ({assignments.length + externalClasses.length})</p>
                   <div className="flex flex-wrap gap-1">
                     {assignments.map((a) => (
                       <span
@@ -190,13 +249,28 @@ export default function StudentScheduleViewDialog({
                         {fmtDayRange(a.dayOfWeek, a.startHour, a.endHour)}
                       </span>
                     ))}
+                    {externalClasses.map((r, i) => (
+                      <span
+                        key={`ext-${i}`}
+                        className="rounded-full border px-2 py-0.5"
+                        style={{
+                          backgroundColor: `${EXTERNAL_CLASS_COLOR}18`,
+                          borderColor: `${EXTERNAL_CLASS_COLOR}40`,
+                          color: EXTERNAL_CLASS_COLOR,
+                        }}
+                      >
+                        {r.title?.trim() || "Otra asignatura"}
+                        {" · "}
+                        {fmtDayRange(r.day, r.start, r.end)}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}
             </div>
           )}
 
-          {ranges.length === 0 && blocked.length === 0 && assignments.length === 0 && (
+          {ranges.length === 0 && occupancy.length === 0 && assignments.length === 0 && (
             <p className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
               Sin franjas ni clases definidas. El alumno se considera disponible en cualquier hora.
             </p>

@@ -2,20 +2,29 @@
 
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
-  CalendarDays, Sparkles, CalendarClock,
+  CalendarDays, Sparkles, CalendarClock, Save, Trash2,
 } from "lucide-react";
 import WeekGrid, { type WeekBlock } from "@/components/WeekGrid";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
 import OnboardingChecklist, { countIncompleteSlotRequests } from "@/components/OnboardingChecklist";
 import TodayAgenda, { countTodaySessions } from "@/components/TodayAgenda";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import { WeekGridSkeleton } from "@/components/skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { buildSubjectColorMap } from "@/lib/subjectColors";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
-import { SCHEDULE_DAY_START, SCHEDULE_DAY_END, endHourFromDuration, resolveMemberDurationMin } from "@/lib/hours";
+import { SCHEDULE_DAY_START, SCHEDULE_DAY_END, endHourFromDuration, endIfAfterStart, resolveMemberDurationMin } from "@/lib/hours";
+import { DAYS } from "@/lib/validate";
 import { carveAvailabilityAroundBlocked, getFreeHourSetsForDays, normalizeRanges, type TimeRange } from "@/lib/studentAvailability";
 import { persistAvailabilityAdds, replaceAvailabilityPieces } from "@/lib/availabilityMutations";
 import TeacherScheduleManageDialog from "@/components/TeacherScheduleManageDialog";
@@ -96,7 +105,8 @@ export default function DashboardClient() {
   const [students, setStudents] = useState(initial.students);
   const [subjectStudents, setSubjectStudents] = useState(initial.subjectStudents);
   const [slotRequests, setSlotRequests] = useState(initial.slotRequests);
-  const [confirmTb, setConfirmTb] = useState<TeacherBlock | null>(null);
+  const [confirmTb, setConfirmTb] = useState(false);
+  const [selectedTb, setSelectedTb] = useState<TeacherBlock | null>(null);
   const [confirmDeleteAsg, setConfirmDeleteAsg] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [studentManageOpen, setStudentManageOpen] = useState(false);
@@ -185,6 +195,26 @@ export default function DashboardClient() {
     }
   }
 
+  function commitAvailabilities(next: Availability[]) {
+    setAvailabilities(next);
+    put("/api/availabilities", next);
+  }
+
+  function commitTeacherBlocks(next: TeacherBlock[]) {
+    setTeacherBlocks(next);
+    put("/api/teacher_blocks", next);
+  }
+
+  function commitAssignments(next: Assignment[]) {
+    setAssignments(next);
+    put("/api/assignments", next);
+  }
+
+  function commitStudents(next: Student[]) {
+    setStudents(next);
+    put("/api/students", next);
+  }
+
   useLayoutEffect(() => {
     if (hydrateFromCache()) setLoading(false);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -251,7 +281,7 @@ export default function DashboardClient() {
         .filter((a) => !excludeIds.has(a.id))
         .map((a) => ({ day: a.dayOfWeek, start: a.startHour, end: a.endHour })),
     ];
-    return getFreeHourSetsForDays(
+    const sets = getFreeHourSetsForDays(
       [day],
       occupied,
       HOURS_START,
@@ -259,6 +289,13 @@ export default function DashboardClient() {
       editAsgStart,
       editDurationMin ?? undefined,
     );
+    if (Number(editAsgDay) === editTarget.dayOfWeek) {
+      const origStart = String(editTarget.startHour);
+      const origEnd = String(editTarget.endHour);
+      sets.startSet.add(origStart);
+      if (editAsgStart === origStart || editAsgStart === "") sets.endSet.add(origEnd);
+    }
+    return sets;
   }, [editTarget, selectedCollectiveSession, editAsgDay, editAsgStart, editDurationMin, teacherBlocks, assignments, students]);
 
   const blockBlocks: WeekBlock[] = useMemo(
@@ -282,10 +319,13 @@ export default function DashboardClient() {
     [blockBlocks, assignmentBlocks],
   );
 
-  const legend = useMemo(
-    () => subjects.map((s) => ({ label: s.name, color: subjectColor[s.id] ?? "#2563eb" })),
-    [subjects, subjectColor],
-  );
+  const legend = useMemo(() => {
+    const items = subjects.map((s) => ({ label: s.name, color: subjectColor[s.id] ?? "#2563eb" }));
+    if (blockBlocks.length > 0) {
+      items.push({ label: "Bloqueos", color: "#475569" });
+    }
+    return items;
+  }, [subjects, subjectColor, blockBlocks.length]);
 
   const scheduleLocked = Boolean(teacher?.scheduleFixed);
 
@@ -364,7 +404,7 @@ export default function DashboardClient() {
       }));
       const carved = args.adds.length > 0 ? carveAvailabilityAroundBlocked(args.adds, blocked) : [];
       if (args.adds.length > 0 && carved.length === 0) {
-        toast("error", "Esa franja queda cubierta por un evento existente");
+        toast("error", "Esa franja queda cubierta por un bloqueo existente");
         return false;
       }
 
@@ -376,6 +416,11 @@ export default function DashboardClient() {
         toast("error", result.error);
         return false;
       }
+
+      commitAvailabilities([
+        ...availabilities.filter((a) => !args.removeIds.includes(a.id)),
+        ...result.rows,
+      ]);
 
       const parts: string[] = [];
       if (result.removed > 0) {
@@ -390,8 +435,6 @@ export default function DashboardClient() {
           ? "Cambios guardados"
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
-      invalidate("/api/availabilities");
-      void load({ force: true });
       return true;
     } finally {
       setSavingTeacher(false);
@@ -406,10 +449,13 @@ export default function DashboardClient() {
     let removed = 0;
     let saved = 0;
     try {
+      const created: TeacherBlock[] = [];
+      let nextAv = availabilities;
+
       for (const id of args.removeIds) {
         const res = await fetch(`/api/teacher_blocks?id=${id}`, { method: "DELETE" });
         if (!res.ok) {
-          toast("error", "No se pudo quitar el evento del profesor");
+          toast("error", "No se pudo quitar el bloqueo del profesor");
           return false;
         }
         removed++;
@@ -420,7 +466,7 @@ export default function DashboardClient() {
         for (const day of days) {
           const dupBlock = teacherBlocks.some(
             (b) => !args.removeIds.includes(b.id) && b.dayOfWeek === day && end > b.startHour && start < b.endHour,
-          );
+          ) || created.some((b) => b.dayOfWeek === day && end > b.startHour && start < b.endHour);
           const dupAsg = assignments.some(
             (a) => a.dayOfWeek === day && end > a.startHour && start < a.endHour,
           );
@@ -439,9 +485,10 @@ export default function DashboardClient() {
             toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
             return false;
           }
+          created.push(await res.json() as TeacherBlock);
           saved++;
 
-          const overlapping = availabilities.filter(
+          const overlapping = nextAv.filter(
             (a) => a.dayOfWeek === day && end > a.startHour && start < a.endHour,
           );
           for (const a of overlapping) {
@@ -454,6 +501,7 @@ export default function DashboardClient() {
               toast("error", replaced.error);
               return false;
             }
+            nextAv = [...nextAv.filter((x) => x.id !== replaced.replacedId), ...replaced.rows];
           }
         }
         if (saved === 0) {
@@ -462,18 +510,21 @@ export default function DashboardClient() {
         }
       }
 
+      commitTeacherBlocks([
+        ...teacherBlocks.filter((b) => !args.removeIds.includes(b.id)),
+        ...created,
+      ]);
+      if (nextAv !== availabilities) commitAvailabilities(nextAv);
+
       const parts: string[] = [];
-      if (removed > 0) parts.push(removed === 1 ? "1 evento quitado" : `${removed} eventos quitados`);
-      if (saved > 0) parts.push(saved === 1 ? "evento creado" : `${saved} eventos creados`);
+      if (removed > 0) parts.push(removed === 1 ? "1 bloqueo quitado" : `${removed} bloqueos quitados`);
+      if (saved > 0) parts.push(saved === 1 ? "bloqueo creado" : `${saved} bloqueos creados`);
       toast(
         "success",
         parts.length === 0
           ? "Cambios guardados"
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
-      invalidate("/api/teacher_blocks");
-      invalidate("/api/availabilities");
-      void load({ force: true });
       return true;
     } finally {
       setSavingTeacher(false);
@@ -483,21 +534,76 @@ export default function DashboardClient() {
   async function removeBlock(id: number): Promise<boolean> {
     const res = await fetch(`/api/teacher_blocks?id=${id}`, { method: "DELETE" });
     if (!res.ok) {
-    toast("error", "No se pudo quitar el evento del profesor");
-    return false;
-  }
-    toast("success", "Evento quitado");
-    invalidate("/api/teacher_blocks");
-    void load({ force: true });
+      toast("error", "No se pudo quitar el bloqueo del profesor");
+      return false;
+    }
+    commitTeacherBlocks(teacherBlocks.filter((b) => b.id !== id));
+    toast("success", "Bloqueo quitado");
     return true;
   }
 
   async function confirmDeleteTb() {
-    if (!confirmTb || deleting) return;
+    if (!selectedTb || deleting) return;
     setDeleting(true);
-    await removeBlock(confirmTb.id);
+    await removeBlock(selectedTb.id);
     setDeleting(false);
-    setConfirmTb(null);
+    setConfirmTb(false);
+    setSelectedTb(null);
+  }
+
+  async function saveTeacherBlock(next: { title: string; day: number; start: number; end: number }) {
+    if (!selectedTb || savingEdit) return;
+    const day = next.day;
+    const start = next.start;
+    const end = next.end;
+    const dupBlock = teacherBlocks.some(
+      (b) => b.id !== selectedTb.id && b.dayOfWeek === day && end > b.startHour && start < b.endHour,
+    );
+    const dupAsg = assignments.some(
+      (a) => a.dayOfWeek === day && end > a.startHour && start < a.endHour,
+    );
+    if (dupBlock || dupAsg) {
+      return toast("error", "Ese horario ya está ocupado");
+    }
+    setSavingEdit(true);
+    const res = await fetch("/api/teacher_blocks", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: selectedTb.id,
+        title: next.title,
+        dayOfWeek: day,
+        startHour: start,
+        endHour: end,
+      }),
+    });
+    if (!res.ok) {
+      setSavingEdit(false);
+      return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar el bloqueo");
+    }
+    const updated = await res.json() as TeacherBlock;
+    let nextAv = availabilities;
+    const overlapping = nextAv.filter(
+      (a) => a.dayOfWeek === day && end > a.startHour && start < a.endHour,
+    );
+    for (const a of overlapping) {
+      const pieces = carveAvailabilityAroundBlocked(
+        [{ day, start: a.startHour, end: a.endHour }],
+        [{ day, start, end }],
+      );
+      const replaced = await replaceAvailabilityPieces(a.id, pieces);
+      if (!replaced.ok) {
+        setSavingEdit(false);
+        return toast("error", replaced.error);
+      }
+      nextAv = [...nextAv.filter((x) => x.id !== replaced.replacedId), ...replaced.rows];
+    }
+
+    commitTeacherBlocks(teacherBlocks.map((b) => (b.id === updated.id ? { ...b, ...updated } : b)));
+    if (nextAv !== availabilities) commitAvailabilities(nextAv);
+    setSavingEdit(false);
+    toast("success", "Bloqueo actualizado");
+    setSelectedTb(null);
   }
 
   useEffect(() => {
@@ -526,7 +632,7 @@ export default function DashboardClient() {
   }, [editAsgStart, editTarget, editHourSets.endSet, editAsgEnd, editDurationMin]);
 
   useEffect(() => {
-    if (!editTarget || editHourSets.startSet.size === 0) return;
+    if (!editTarget || editAsgStart === "" || editHourSets.startSet.size === 0) return;
     if (!editHourSets.startSet.has(editAsgStart)) {
       setEditAsgStart(Array.from(editHourSets.startSet)[0]);
     }
@@ -536,7 +642,7 @@ export default function DashboardClient() {
     const target = selectedCollectiveSession?.[0] ?? selectedAssignment;
     if (!target || savingEdit) return;
     if (editHourSets.startSet.size === 0) {
-      return toast("error", "No hay hueco libre para ese día. Revisa la disponibilidad y eventos existentes.");
+      return toast("error", "No hay hueco libre para ese día. Revisa la disponibilidad y los bloqueos existentes.");
     }
     const day = Number(editAsgDay);
     const start = Number(editAsgStart);
@@ -590,6 +696,7 @@ export default function DashboardClient() {
   }): Promise<boolean> {
     setSavingStudentManage(true);
     try {
+      let nextStudents = students;
       const blockedAfterRemove = new Map<number, TimeRange[]>();
       const availableAfterRemove = new Map<number, TimeRange[]>();
       for (const { student, indices } of args.removes) {
@@ -597,9 +704,10 @@ export default function DashboardClient() {
         const drop = new Set(indices);
         const nextBlocked = (student.blockedRanges ?? []).filter((_, i) => !drop.has(i));
         const ok = await updateStudentRanges(student, { blockedRanges: nextBlocked });
-        if (!ok) { toast("error", "No se pudo quitar el bloqueo"); return false; }
+        if (!ok) { toast("error", "No se pudo quitar la ocupación"); return false; }
         blockedAfterRemove.set(student.id, nextBlocked);
         availableAfterRemove.set(student.id, student.availableRanges ?? []);
+        nextStudents = nextStudents.map((s) => s.id === student.id ? { ...s, blockedRanges: nextBlocked } : s);
       }
       if (args.adds.length > 0) {
         for (const st of args.targets) {
@@ -615,12 +723,12 @@ export default function DashboardClient() {
           const baseAvail = availableAfterRemove.get(st.id) ?? st.availableRanges ?? [];
           const nextAvailable = carveAvailabilityAroundBlocked(baseAvail, nextBlocked);
           const ok = await updateStudentRanges(st, { blockedRanges: nextBlocked, availableRanges: nextAvailable });
-          if (!ok) { toast("error", "No se pudo guardar el bloqueo"); return false; }
+          if (!ok) { toast("error", "No se pudo guardar la ocupación"); return false; }
+          nextStudents = nextStudents.map((s) => s.id === st.id ? { ...s, blockedRanges: nextBlocked, availableRanges: nextAvailable } : s);
         }
       }
+      commitStudents(nextStudents);
       toast("success", "Cambios guardados");
-      invalidateMany(["/api/students", "/api/assignments"]);
-      void load({ force: true });
       return true;
     } finally { setSavingStudentManage(false); }
   }
@@ -637,6 +745,7 @@ export default function DashboardClient() {
   }): Promise<boolean> {
     setSavingStudentManage(true);
     try {
+      const created: Assignment[] = [];
       for (const id of args.removeIds) {
         const res = await fetch(`/api/assignments?id=${id}`, { method: "DELETE" });
         if (!res.ok) { toast("error", "No se pudo eliminar la clase"); return false; }
@@ -655,12 +764,20 @@ export default function DashboardClient() {
               body: JSON.stringify({ subjectId, studentId: st.id, dayOfWeek: day, startHour: start, endHour: end, collectiveSessionId: sessionId }),
             });
             if (!res.ok) { toast("error", `No se pudo crear la clase de ${st.name}`); return false; }
+            const row = await res.json() as Assignment;
+            created.push({
+              ...row,
+              student: { id: st.id, name: st.name },
+              subject: { id: subj.id, name: subj.name, isCollective: subj.isCollective },
+            });
           }
         }
       }
+      commitAssignments([
+        ...assignments.filter((a) => !args.removeIds.includes(a.id)),
+        ...created,
+      ]);
       toast("success", "Cambios guardados");
-      invalidateMany(["/api/students", "/api/assignments"]);
-      void load({ force: true });
       return true;
     } finally { setSavingStudentManage(false); }
   }
@@ -757,13 +874,19 @@ export default function DashboardClient() {
               : (b) => {
                   if (b.id >= 1000000) {
                     const blk = teacherBlocks.find((x) => 1000000 + x.id === b.id);
-                    if (blk) setConfirmTb(blk);
+                    if (blk) setSelectedTb(blk);
                     return;
                   }
                   const a = assignments.find((x) => x.id === b.id);
                   if (!a) return;
-                  if (a.collectiveSessionId) {
-                    const group = assignments.filter((x) => x.collectiveSessionId === a.collectiveSessionId);
+                  const group = a.collectiveSessionId
+                    ? assignments.filter((x) => x.collectiveSessionId === a.collectiveSessionId)
+                    : null;
+                  const target = group?.[0] ?? a;
+                  setEditAsgDay(String(target.dayOfWeek));
+                  setEditAsgStart(String(target.startHour));
+                  setEditAsgEnd(String(target.endHour));
+                  if (group) {
                     setSelectedCollectiveSession(group);
                     setSelectedAssignment(null);
                   } else {
@@ -797,6 +920,27 @@ export default function DashboardClient() {
             }}
             onSave={saveEditAsg}
             onRequestDelete={() => setConfirmDeleteAsg(true)}
+          />
+
+          <TeacherBlockEditDialog
+            open={selectedTb != null}
+            saving={savingEdit}
+            initial={selectedTb
+              ? {
+                  title: selectedTb.title,
+                  day: selectedTb.dayOfWeek,
+                  start: selectedTb.startHour,
+                  end: selectedTb.endHour,
+                }
+              : null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setSelectedTb(null);
+                setConfirmTb(false);
+              }
+            }}
+            onSave={(next) => { void saveTeacherBlock(next); }}
+            onRequestDelete={() => setConfirmTb(true)}
           />
 
           <TeacherScheduleManageDialog
@@ -840,15 +984,132 @@ export default function DashboardClient() {
             confirmDeleteAsg={confirmDeleteAsg}
             selectedAssignment={selectedAssignment}
             selectedCollectiveSession={selectedCollectiveSession}
-            confirmTb={confirmTb}
+            confirmTb={confirmTb ? selectedTb : null}
             deleting={deleting}
             onConfirmDeleteAsgOpenChange={setConfirmDeleteAsg}
-            onConfirmTbOpenChange={(open) => { if (!open) setConfirmTb(null); }}
+            onConfirmTbOpenChange={(open) => { if (!open && !deleting) setConfirmTb(false); }}
             onDeleteAssignment={deleteAssignment}
             onDeleteTeacherBlock={confirmDeleteTb}
           />
         </>
       )}
     </div>
+  );
+}
+
+function TeacherBlockEditDialog({
+  open,
+  saving,
+  initial,
+  onOpenChange,
+  onSave,
+  onRequestDelete,
+}: {
+  open: boolean;
+  saving: boolean;
+  initial: { title: string; day: number; start: number; end: number } | null;
+  onOpenChange: (open: boolean) => void;
+  onSave: (next: { title: string; day: number; start: number; end: number }) => void;
+  onRequestDelete: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [day, setDay] = useState("0");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!open || !initial) return;
+    setTitle(initial.title);
+    setDay(String(initial.day));
+    setStart(String(initial.start));
+    setEnd(String(initial.end));
+    setErr("");
+  }, [open, initial]);
+
+  const startNum = Number(start);
+  const endOptions = HOURS_END.filter((o) => Number(o.value) > startNum);
+
+  return (
+    <Dialog open={open && initial != null} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Editar bloqueo</DialogTitle>
+        </DialogHeader>
+        {initial && (
+          <div className="space-y-3">
+            <div>
+              <Label>Motivo</Label>
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Ej: Reunión de departamento"
+              />
+            </div>
+            <div>
+              <Label>Día</Label>
+              <Select value={day} onValueChange={setDay}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {DAYS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Hora inicio</Label>
+                <Select value={start || undefined} onValueChange={(v) => { setStart(v); setEnd((e) => endIfAfterStart(v, e)); }}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
+                  <SelectContent>
+                    {HOURS_START.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Hora fin</Label>
+                <Select value={end || undefined} onValueChange={setEnd} disabled={!start}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
+                  <SelectContent>
+                    {endOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {err ? <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{err}</p> : null}
+          </div>
+        )}
+        <div className="mt-5 border-t border-gray-100 pt-4">
+          <Button
+            className="w-full"
+            type="button"
+            onClick={() => {
+              setErr("");
+              const d = Number(day);
+              const s = Number(start);
+              const e = Number(end);
+              if (!title.trim()) return setErr("El motivo es obligatorio");
+              if (!Number.isFinite(d) || !Number.isFinite(s) || !Number.isFinite(e)) {
+                return setErr("Selecciona un horario válido");
+              }
+              if (!(e > s)) return setErr("La hora de fin debe ser posterior a la de inicio");
+              onSave({ title: title.trim(), day: d, start: s, end: e });
+            }}
+            loading={saving}
+          >
+            <Save size={14} /> Guardar cambios
+          </Button>
+          <div className="mt-5 flex justify-center border-t border-dashed border-gray-200 pt-4">
+            <button
+              type="button"
+              onClick={onRequestDelete}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors"
+            >
+              <Trash2 size={13} aria-hidden />
+              Eliminar bloqueo
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

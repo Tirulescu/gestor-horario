@@ -1,6 +1,6 @@
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-export function isLocalHost(hostname: string): boolean {
+function isLocalHost(hostname: string): boolean {
   return LOCAL_HOSTS.has(hostname);
 }
 
@@ -21,7 +21,7 @@ export function getRequestOrigin(request: Request): string {
 }
 
 /** Origen de la app en el cliente (OAuth redirectTo). */
-export function getClientAppOrigin(): string {
+function getClientAppOrigin(): string {
   if (process.env.NEXT_PUBLIC_APP_URL) {
     return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
   }

@@ -199,3 +199,8 @@ export const SCHEDULE_HOURS_START = hourOptions(SCHEDULE_DAY_START, SCHEDULE_DAY
 export const SCHEDULE_HOURS_END = hourOptions(SCHEDULE_DAY_START, SCHEDULE_SELECT_END).filter(
   (o) => Number(o.value) > SCHEDULE_DAY_START,
 );
+
+/** Conserva `end` solo si es posterior a `start`; si no, cadena vacía (Select sin valor huérfano). */
+export function endIfAfterStart(start: string, end: string): string {
+  return start !== "" && end !== "" && Number(end) > Number(start) ? end : "";
+}

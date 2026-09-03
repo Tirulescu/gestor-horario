@@ -193,7 +193,7 @@ export function hasFreshAll(keys: readonly string[]): boolean {
 }
 
 /** Timestamp del último put en memoria (0 si no hay). */
-export function fetchedAt(key: string): number {
+function fetchedAt(key: string): number {
   return fetchedAtStore()[key] ?? 0;
 }
 
@@ -292,7 +292,7 @@ export async function revalidate<T = unknown>(
 }
 
 /** Prefetch en background solo si la key no está fresca. */
-export function prefetchEndpoints(urls: readonly string[]) {
+function prefetchEndpoints(urls: readonly string[]) {
   if (typeof window === "undefined") return;
   for (const url of urls) {
     if (hasFresh(url)) continue;
@@ -311,7 +311,7 @@ export function invalidateMany(keys: string[]) {
   for (const key of keys) invalidate(key);
 }
 
-export const WARM_ENDPOINTS = [
+const WARM_ENDPOINTS = [
   "/api/teachers",
   "/api/subjects",
   "/api/students",
@@ -343,7 +343,7 @@ export const STUDENTS_ENDPOINTS = [
   "/api/teachers",
 ] as const;
 
-export const SUBJECTS_ENDPOINTS = ["/api/subjects", "/api/teachers"] as const;
+const SUBJECTS_ENDPOINTS = ["/api/subjects", "/api/teachers"] as const;
 
 export const REQUESTS_ENDPOINTS = [
   "/api/subjects",
@@ -357,7 +357,7 @@ export function subjectGradeKey(subjectId: number) {
   return `/api/subject_grade_durations?subjectId=${subjectId}`;
 }
 
-export function subjectDetailEndpoints(subjectId: number) {
+function subjectDetailEndpoints(subjectId: number) {
   return [
     "/api/subjects",
     "/api/subject_students",

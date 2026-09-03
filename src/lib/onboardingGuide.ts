@@ -1,6 +1,6 @@
 import { warmData } from "./clientCache";
 
-export const ONBOARDING_DISMISS_KEY = "onboarding-dismissed-v1";
+const ONBOARDING_DISMISS_KEY = "onboarding-dismissed-v1";
 
 export interface OnboardingData {
   subjectsCount: number;
@@ -34,12 +34,6 @@ export function dismissOnboarding(): void {
   } catch {}
 }
 
-export function resetOnboardingDismiss(): void {
-  try {
-    localStorage.removeItem(ONBOARDING_DISMISS_KEY);
-  } catch {}
-}
-
 export function countIncompleteSlotRequests(
   members: { studentId: number; subjectId: number; slotsRequired?: number }[],
   slotRequests: { studentId: number; subjectId: number }[],
@@ -55,7 +49,7 @@ export function countIncompleteSlotRequests(
   return incomplete;
 }
 
-export const EMPTY_ONBOARDING_DATA: OnboardingData = {
+const EMPTY_ONBOARDING_DATA: OnboardingData = {
   subjectsCount: 0,
   studentsCount: 0,
   availabilitiesCount: 0,
@@ -101,7 +95,7 @@ export function buildGuideSteps(data: OnboardingData): GuideStep[] {
     {
       id: "subjects",
       label: "Crear al menos una asignatura",
-      tip: "Define cada materia que impartes: duración de clase, si es colectiva y un color para identificarla en el calendario.",
+      tip: "Define cada materia que impartes: duración, si es colectiva y un color. En su ficha inscribes alumnos (duración y opciones de horario por alumno o curso) y puedes fijar esa asignatura para que el auto-agendado no la mueva.",
       done: data.subjectsCount > 0,
       href: "/subjects",
       hrefLabel: "Ir a asignaturas",
@@ -109,7 +103,7 @@ export function buildGuideSteps(data: OnboardingData): GuideStep[] {
     {
       id: "students",
       label: "Añadir alumnos",
-      tip: "Registra a tus alumnos e inscríbelos en tus asignaturas. En Editar cambias datos, matrícula, disponibilidad y las franjas ya creadas. Con Añadir al horario creas clases (tuyas o de otras del centro) y bloqueos (actividades fuera del centro).",
+      tip: "Registra a tus alumnos e inscríbelos en tus asignaturas. En Editar cambias datos, matrícula, su disponibilidad y las franjas ya creadas. Con Añadir al horario también puedes dejar constancia de lo que ya tienen ocupado: «Otra asignatura» para materias del conservatorio que no impartes (orquesta, lenguaje…) y «Bloqueo» para actividades fuera del centro (extraescolares, ensayos…). Así el horario las respeta sin intentar colocarlas por ti.",
       done: data.studentsCount > 0,
       href: "/students",
       hrefLabel: "Ir a alumnos",
@@ -117,7 +111,7 @@ export function buildGuideSteps(data: OnboardingData): GuideStep[] {
     {
       id: "availability",
       label: "Definir tu disponibilidad semanal",
-      tip: "Marca las franjas en las que puedes dar clase. El auto-agendado solo usará esas horas.",
+      tip: "En Mi horario, usa Añadir al calendario para marcar cuándo das clase y tus propios bloqueos. Preferencias y auto-agendado se apoyan en esa disponibilidad; las ocupaciones del alumno (otras asignaturas del conservatorio o actividades externas) se anotan a mano y pueden quedar fuera de ella. Desde este perfil puedes ocultar el fin de semana.",
       done: data.availabilitiesCount > 0,
       href: "/dashboard",
       hrefLabel: "Ir a mi horario",
@@ -127,7 +121,7 @@ export function buildGuideSteps(data: OnboardingData): GuideStep[] {
       label: data.incompleteRequests > 0
         ? `Completar preferencias (${data.incompleteRequests} pendiente${data.incompleteRequests !== 1 ? "s" : ""})`
         : "Completar preferencias horarias",
-      tip: "Cada alumno elige sus preferencias de día y hora por asignatura. Cuanto más completas, mejor encaja el horario.",
+      tip: "Tú anotas, por asignatura, las franjas que encajan con cada alumno. Solo aparecen horas compatibles con tu disponibilidad y la del alumno, descontando lo que ya tengan ocupado. Puedes partir la duración en varias preferencias. Las otras asignaturas del conservatorio y los bloqueos externos no piden preferencias: ya están fijadas a mano.",
       done: requestsDone,
       href: "/requests",
       hrefLabel: "Ir a preferencias",
@@ -135,7 +129,7 @@ export function buildGuideSteps(data: OnboardingData): GuideStep[] {
     {
       id: "schedule",
       label: "Auto-agendar clases",
-      tip: "Genera un borrador respetando disponibilidad y preferencias. Revísalo y aplícalo cuando esté bien.",
+      tip: "Genera un borrador de tus clases respetando disponibilidad, preferencias y lo que el alumno ya tenga ocupado en el conservatorio o fuera. Revísalo y aplícalo. Esas otras ocupaciones se mantienen como las dejaste. Si fijas el horario aquí o en una asignatura, no se recalcula.",
       done: data.assignmentsCount > 0,
       href: "/dashboard",
       hrefLabel: "Auto-agendar",

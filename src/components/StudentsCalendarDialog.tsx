@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { CalendarDays, CalendarOff, CalendarPlus, X } from "lucide-react";
+import { CalendarDays, CalendarOff, CalendarPlus, Pencil, Trash2, X } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -55,6 +55,8 @@ interface StudentsCalendarDialogProps {
   subjects?: Subject[];
   assignments?: Assignment[];
   initialView?: ViewMode;
+  onEditAssignment?: (assignmentId: number) => void;
+  onDeleteAssignment?: (assignmentId: number) => void;
 }
 
 function overlaps(
@@ -71,6 +73,9 @@ function SlotOverlapDialog({
   startHour,
   endHour,
   items,
+  isEventsView,
+  onEditAssignment,
+  onDeleteAssignment,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -78,6 +83,9 @@ function SlotOverlapDialog({
   startHour: number;
   endHour: number;
   items: WeekBlock[];
+  isEventsView?: boolean;
+  onEditAssignment?: (assignmentId: number) => void;
+  onDeleteAssignment?: (assignmentId: number) => void;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -160,6 +168,30 @@ function SlotOverlapDialog({
                   )}
                 </div>
               </div>
+              {isEventsView && item.id > 0 && (onEditAssignment || onDeleteAssignment) && (
+                <div className="flex items-center gap-1 mt-2 ml-4.5 pl-0.5">
+                  {onEditAssignment && (
+                    <button
+                      type="button"
+                      onClick={() => onEditAssignment(item.id)}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+                    >
+                      <Pencil size={12} aria-hidden />
+                      Editar
+                    </button>
+                  )}
+                  {onDeleteAssignment && (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteAssignment(item.id)}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors"
+                    >
+                      <Trash2 size={12} aria-hidden />
+                      Borrar
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -176,6 +208,8 @@ export default function StudentsCalendarDialog({
   subjects = [],
   assignments = [],
   initialView = "blocks",
+  onEditAssignment,
+  onDeleteAssignment,
 }: StudentsCalendarDialogProps) {
   const hideWeekends = useHideWeekends();
   const [view, setView] = useState<ViewMode>(initialView);
@@ -254,8 +288,8 @@ export default function StudentsCalendarDialog({
     for (const s of filteredStudents) {
       const color = colorByStudent[s.id] ?? "#dc2626";
       (s.blockedRanges ?? []).forEach((r, i) => {
-        const externalClass = isExternalClass(r);
-        const name = r.title?.trim() || (externalClass ? "Clase del centro" : "Bloqueo");
+        if (isExternalClass(r)) return;
+        const name = r.title?.trim() || "Bloqueo";
         out.push({
           id: s.id * 1000 + i,
           dayOfWeek: r.day,
@@ -263,11 +297,11 @@ export default function StudentsCalendarDialog({
           endHour: r.end,
           title: name,
           subtitle: undefined,
-          color: externalClass ? EXTERNAL_CLASS_COLOR : color,
+          color,
           detailTitle: name,
           details: [
             { label: "Alumno", value: s.name },
-            { label: "Tipo", value: externalClass ? "Clase del centro" : "Bloqueo" },
+            { label: "Tipo", value: "Bloqueo" },
             { label: "Nombre", value: name },
             { label: "Día", value: DAYS[r.day] },
             { label: "Horario", value: fmtRange(r.start, r.end) },
@@ -279,7 +313,7 @@ export default function StudentsCalendarDialog({
   }, [filteredStudents, colorByStudent]);
 
   const eventItems: WeekBlock[] = useMemo(() => {
-    return assignments
+    const assignmentEvents = assignments
       .filter((a) => filteredStudentIds.has(a.studentId))
       .map((a) => {
         const studentName =
@@ -308,13 +342,43 @@ export default function StudentsCalendarDialog({
           ],
         } satisfies WeekBlock;
       });
-  }, [assignments, filteredStudentIds, students, subjects, subjectColor]);
+
+    // Otras asignaturas (blockedRanges con kind "class")
+    const externalEvents: WeekBlock[] = [];
+    for (const s of filteredStudents) {
+      (s.blockedRanges ?? []).forEach((r, i) => {
+        if (!isExternalClass(r)) return;
+        const name = r.title?.trim() || "Otra asignatura";
+        externalEvents.push({
+          id: -(s.id * 1000 + i),
+          dayOfWeek: r.day,
+          startHour: r.start,
+          endHour: r.end,
+          title: name,
+          subtitle: undefined,
+          color: EXTERNAL_CLASS_COLOR,
+          detailTitle: name,
+          details: [
+            { label: "Alumno", value: s.name },
+            { label: "Tipo", value: "Otra asignatura" },
+            { label: "Nombre", value: name },
+            { label: "Día", value: DAYS[r.day] },
+            { label: "Horario", value: fmtRange(r.start, r.end) },
+          ],
+        });
+      });
+    }
+
+    return [...assignmentEvents, ...externalEvents];
+  }, [assignments, filteredStudentIds, filteredStudents, students, subjects, subjectColor]);
 
   const items = view === "blocks" ? blockItems : eventItems;
 
   const legend = useMemo(() => {
     if (view === "blocks") {
-      const withBlocks = filteredStudents.filter((s) => (s.blockedRanges?.length ?? 0) > 0);
+      const withBlocks = filteredStudents.filter((s) =>
+        (s.blockedRanges ?? []).some((r) => !isExternalClass(r)),
+      );
       return withBlocks.map((s) => ({
         label: s.name,
         color: colorByStudent[s.id] ?? "#dc2626",
@@ -324,9 +388,12 @@ export default function StudentsCalendarDialog({
       const a = assignments.find((x) => x.id === e.id);
       return a?.subjectId;
     }));
-    return subjects
+    const items: { label: string; color: string }[] = subjects
       .filter((s) => used.has(s.id))
       .map((s) => ({ label: s.name, color: subjectColor[s.id] ?? "#2563eb" }));
+    const hasExternal = eventItems.some((e) => e.id < 0);
+    if (hasExternal) items.push({ label: "Otras asignaturas", color: EXTERNAL_CLASS_COLOR });
+    return items;
   }, [view, filteredStudents, colorByStudent, eventItems, assignments, subjects, subjectColor]);
 
   const handleBlockClick = useCallback((block: WeekBlock) => {
@@ -443,6 +510,9 @@ export default function StudentsCalendarDialog({
           startHour={slotFocus?.startHour ?? 0}
           endHour={slotFocus?.endHour ?? 0}
           items={overlapping}
+          isEventsView={view === "events"}
+          onEditAssignment={onEditAssignment}
+          onDeleteAssignment={onDeleteAssignment}
         />
       </DialogContent>
     </Dialog>

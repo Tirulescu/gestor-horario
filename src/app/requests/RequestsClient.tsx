@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Plus, Save, Inbox, X, BookOpen, ChevronRight, ArrowLeft,
+  Plus, Save, Inbox, X, BookOpen, ArrowLeft,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -24,11 +24,11 @@ import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import { ChipGroupSkeleton, MemberCardSkeleton } from "@/components/skeletons";
-import { warmData, put, invalidate, hasFresh, hasFreshAll, fetchApi, onCacheStale, queuePriorityWrite, clearPriorityWrites, flushPendingPriorityWrites } from "@/lib/clientCache";
+import { warmData, put, invalidate, hasFresh, hasFreshAll, fetchApi, onCacheStale, queuePriorityWrite, flushPendingPriorityWrites } from "@/lib/clientCache";
 import { hasRequestsCache } from "@/lib/pageBoot";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { DAYS } from "@/lib/validate";
-import { fmtRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, fmtDurationMin, resolveMemberDurationMin, fmtSubjectDurationOptions, slotDurationMin } from "@/lib/hours";
+import { fmtRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END, fmtDurationMin, resolveMemberDurationMin, slotDurationMin } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
 import { normalizeRanges, snapSlotHours, validateSlotRequest } from "@/lib/studentAvailability";
 
@@ -830,7 +830,7 @@ export default function RequestsClient() {
               </div>
               <div>
                 <Label htmlFor="a-start">Hora de inicio</Label>
-                <Select value={addStart} onValueChange={changeAddStart}>
+                <Select value={addStart || undefined} onValueChange={changeAddStart}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
                     {HOURS_START.map((o) => hourItem(o, addHourSets.startSet))}
@@ -839,7 +839,7 @@ export default function RequestsClient() {
               </div>
               <div>
                 <Label htmlFor="a-end">Hora de fin</Label>
-                <Select value={addEnd} onValueChange={setAddEnd} disabled={addHourSets.endSet.size === 0}>
+                <Select value={addEnd || undefined} onValueChange={setAddEnd} disabled={addHourSets.endSet.size === 0}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
                     {endOptions(addHourSets.endSet).map((o) => (
@@ -903,7 +903,7 @@ export default function RequestsClient() {
               </div>
               <div>
                 <Label htmlFor="e-start">Hora de inicio</Label>
-                <Select value={editStart} onValueChange={changeEditStart}>
+                <Select value={editStart || undefined} onValueChange={changeEditStart}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
                     {HOURS_START.map((o) => hourItem(o, editHourSets.startSet))}
@@ -912,7 +912,7 @@ export default function RequestsClient() {
               </div>
               <div>
                 <Label htmlFor="e-end">Hora de fin</Label>
-                <Select value={editEnd} onValueChange={setEditEnd} disabled={editHourSets.endSet.size === 0}>
+                <Select value={editEnd || undefined} onValueChange={setEditEnd} disabled={editHourSets.endSet.size === 0}>
                   <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
                   <SelectContent>
                     {endOptions(editHourSets.endSet).map((o) => (

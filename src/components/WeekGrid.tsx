@@ -176,9 +176,20 @@ export default function WeekGrid({
     if (!expandMobile) return;
     const el = sentinelRef.current;
     if (!el) return;
+
+    const isBodyScrollLocked = () => {
+      const body = document.body;
+      return (
+        body.hasAttribute("data-scroll-locked") ||
+        document.documentElement.hasAttribute("data-scroll-locked") ||
+        getComputedStyle(body).overflow === "hidden"
+      );
+    };
+
     const observer = new IntersectionObserver(
       ([entry]) => {
-        // Solo expandir cuando el usuario ha hecho scroll más allá del calendario (no si está debajo del pliegue)
+        // Un diálogo abierto bloquea el scroll y falsea la intersección → el calendario salta.
+        if (isBodyScrollLocked()) return;
         setExpanded(!entry.isIntersecting && entry.boundingClientRect.top < 0);
       },
       { threshold: 0 }
@@ -206,8 +217,10 @@ export default function WeekGrid({
   const dayCount = visibleDays.length;
 
   const todayIdx = (new Date().getDay() + 6) % 7;
-  const now = new Date();
-  const nowHour = now.getHours() + now.getMinutes() / 60;
+  const nowHour = useMemo(() => {
+    const now = new Date();
+    return now.getHours() + now.getMinutes() / 60;
+  }, []);
 
   const { lo, hi } = useMemo(
     () => computeFullRange(startH, endH, contentHours),
@@ -243,11 +256,6 @@ export default function WeekGrid({
     }
     return result;
   }, [blocks]);
-
-  /** Carriles paralelos por día (mín. 1): define el ancho relativo de cada columna. */
-  const dayLaneCounts = useMemo(() => {
-    return visibleDays.map((day) => layout[day]?.[0]?.cols ?? 1);
-  }, [layout, visibleDays]);
 
   /** Ancho fijo por día = texto más largo × carriles (sin base grande ni crecimiento fr). */
   const dayMinWidthsPx = useMemo(() => {
@@ -322,33 +330,48 @@ export default function WeekGrid({
     };
   }, [shouldFitViewport, isFullscreen, expanded, expandMobile, hourHeight, lo, hi, showLegend, legendItems.length]);
 
+  const didScrollToNow = useRef(false);
   useEffect(() => {
-    if (shouldFitViewport) return;
+    if (shouldFitViewport) {
+      didScrollToNow.current = false;
+      return;
+    }
     const body = bodyScrollRef.current;
-    if (!body) return;
+    if (!body || didScrollToNow.current) return;
 
-    const scrollHour = showNowLine
-      ? nowHour
-      : contentHours.length > 0
-        ? Math.min(...contentHours)
-        : lo;
-
-    const raf = requestAnimationFrame(() => {
+    const scrollToNow = () => {
+      if (didScrollToNow.current || body.clientHeight <= 0) return;
+      const scrollHour = showNowLine
+        ? nowHour
+        : contentHours.length > 0
+          ? Math.min(...contentHours)
+          : lo;
       const pixelTop = (scrollHour - lo) * effectiveHourHeight;
       body.scrollTop = Math.max(0, pixelTop - body.clientHeight * 0.2);
+      didScrollToNow.current = true;
+    };
+
+    scrollToNow();
+    if (didScrollToNow.current) return;
+
+    const ro = new ResizeObserver(() => {
+      scrollToNow();
+      if (didScrollToNow.current) ro.disconnect();
     });
-    return () => cancelAnimationFrame(raf);
+    ro.observe(body);
+    return () => ro.disconnect();
   }, [lo, hi, effectiveHourHeight, showNowLine, nowHour, contentHours, shouldFitViewport]);
 
   const handleBlockClick = useCallback(
     (block: WeekBlock) => {
-      if (onBlockClick) {
-        onBlockClick(block);
+      // En pantalla completa, igual que el calendario de alumnos: detalle centrado encima del overlay.
+      if (isFullscreen || !onBlockClick) {
+        setViewBlock(block);
         return;
       }
-      setViewBlock(block);
+      onBlockClick(block);
     },
-    [onBlockClick],
+    [onBlockClick, isFullscreen],
   );
 
   const viewDialogRows: CalendarEventDetailRow[] = viewBlock
