@@ -213,11 +213,12 @@ export default function StudentsClient() {
     setEditOpen(true);
   }
 
-  async function openEdit(s: Student) {
+  function openEdit(s: Student) {
     setEditing(s);
     setFName(s.name); setFGrade(s.grade ?? ""); setFEmail(s.email ?? "");
-    const rows = await fetch(`/api/subject_students?studentId=${s.id}`).then((r) => r.json()) as SSRow[];
-    const subs = new Set(rows.map((r) => r.subjectId));
+    const subs = new Set(
+      subjectLinks.filter((r) => r.studentId === s.id).map((r) => r.subjectId),
+    );
     setSelSubjects(subs);
     setInitialSubjects(subs);
     setEditOpen(true);
