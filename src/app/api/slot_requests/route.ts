@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
 
   const requiredDurationMin = await getRequiredDurationMin(subjectId, studentId);
   if (requiredDurationMin != null && !slotFitsMaxDuration(startHour, endHour, requiredDurationMin)) {
-    return apiError(`La franja no puede superar ${requiredDurationMin} min (puedes dividirla en varias solicitudes)`);
+    return apiError(`La franja no puede superar ${requiredDurationMin} min (puedes dividirla en varias preferencias)`);
   }
 
   let prefOrder = Number(body.prefOrder);
@@ -158,7 +158,7 @@ export async function PATCH(req: NextRequest) {
 
   const requiredDurationMin = await getRequiredDurationMin(row.subjectId, row.studentId);
   if (requiredDurationMin != null && !slotFitsMaxDuration(startHour, endHour, requiredDurationMin)) {
-    return apiError(`La franja no puede superar ${requiredDurationMin} min (puedes dividirla en varias solicitudes)`);
+    return apiError(`La franja no puede superar ${requiredDurationMin} min (puedes dividirla en varias preferencias)`);
   }
 
   const student = await db.query.students.findFirst({ where: eq(schema.students.id, row.studentId) });

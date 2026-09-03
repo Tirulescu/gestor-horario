@@ -8,6 +8,7 @@ export const teachers = pgTable("teachers", {
   name: text("name").notNull(),
   email: text("email"),
   scheduleFixed: boolean("schedule_fixed").notNull().default(false),
+  hideWeekends: boolean("hide_weekends").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

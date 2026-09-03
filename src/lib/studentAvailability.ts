@@ -9,8 +9,21 @@ import {
 } from "./hours";
 import { mergeIntervals } from "./scheduleIntervals";
 import { MAX_SCHEDULE_RANGES } from "./validate";
+/** `class` = clase del centro que no impartes; `block` = actividad fuera del centro. */
+export type OccupancyKind = "block" | "class";
+
 /** Franja horaria semanal: day 0=Lun … 6=Dom, start/end en horas decimales. */
-export type TimeRange = { day: number; start: number; end: number; title?: string };
+export type TimeRange = { day: number; start: number; end: number; title?: string; kind?: OccupancyKind };
+
+export function isExternalClass(r: TimeRange): boolean {
+  return r.kind === "class";
+}
+
+export function isActivityBlock(r: TimeRange): boolean {
+  return r.kind !== "class";
+}
+
+export const EXTERNAL_CLASS_COLOR = "#0f766e";
 
 export function normalizeRanges(raw: unknown): TimeRange[] {
   if (!Array.isArray(raw)) return [];
@@ -31,16 +44,18 @@ export function normalizeRanges(raw: unknown): TimeRange[] {
     );
 }
 
-/** Igual que normalizeRanges, pero conserva un título opcional (bloqueos). */
+/** Igual que normalizeRanges, pero conserva título y tipo (bloqueo / clase ajena). */
 export function normalizeBlockedRanges(raw: unknown): TimeRange[] {
   if (!Array.isArray(raw)) return [];
   return raw.slice(0, MAX_SCHEDULE_RANGES)
-    .map((b: { day?: unknown; start?: unknown; end?: unknown; title?: unknown }) => {
+    .map((b: { day?: unknown; start?: unknown; end?: unknown; title?: unknown; kind?: unknown }) => {
       const title = typeof b.title === "string" ? b.title.trim() : "";
+      const kind: OccupancyKind = b.kind === "class" ? "class" : "block";
       return {
         day: Number(b.day),
         start: Number(b.start),
         end: Number(b.end),
+        kind,
         ...(title ? { title } : {}),
       };
     })
@@ -235,7 +250,7 @@ export function validateSlotRequest(params: {
   if (!(end > start)) return "La hora de fin debe ser posterior a la de inicio";
 
   if (requiredDurationMin != null && requiredDurationMin > 0 && !slotFitsMaxDuration(start, end, requiredDurationMin)) {
-    return `La franja no puede superar ${requiredDurationMin} min (puedes dividirla en varias solicitudes)`;
+    return `La franja no puede superar ${requiredDurationMin} min (puedes dividirla en varias preferencias)`;
   }
 
   const teacherOk = teacherAvails.some(
@@ -384,7 +399,7 @@ export function getFreeHourSetsForDays(
   return { startSet, endSet };
 }
 
-/** Conjuntos de horas válidas para selects de solicitudes (profesor ∩ alumno − bloqueos). */
+/** Conjuntos de horas válidas para selects de preferencias (profesor ∩ alumno − bloqueos). */
 export function getSlotHourSets(
   day: number,
   teacherAvails: { dayOfWeek: number; startHour: number; endHour: number }[],

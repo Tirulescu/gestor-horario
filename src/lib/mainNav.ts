@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BookOpen, CalendarDays, GraduationCap, Inbox } from "lucide-react";
+import { BookOpen, CalendarDays, GraduationCap } from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -14,7 +14,7 @@ export function getMainNavItems(): NavItem[] {
       href: "/dashboard",
       label: "Inicio",
       icon: CalendarDays,
-      isActive: (pathname) => pathname.startsWith("/dashboard"),
+      isActive: (pathname) => pathname === "/" || pathname.startsWith("/dashboard"),
     },
     {
       href: "/students",
@@ -27,12 +27,6 @@ export function getMainNavItems(): NavItem[] {
       label: "Asignaturas",
       icon: BookOpen,
       isActive: (pathname) => pathname === "/subjects" || pathname.startsWith("/subjects/"),
-    },
-    {
-      href: "/requests",
-      label: "Solicitudes",
-      icon: Inbox,
-      isActive: (pathname) => pathname === "/requests",
     },
   ];
 }

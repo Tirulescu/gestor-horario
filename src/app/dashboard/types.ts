@@ -5,7 +5,7 @@ export const COLORS = ["#2563eb", "#1d4ed8", "#0891b2", "#4f46e5", "#0284c7", "#
 export const HOURS_START = SCHEDULE_HOURS_START;
 export const HOURS_END = SCHEDULE_HOURS_END;
 
-export interface Teacher { id: number; name: string; email?: string | null; scheduleFixed?: boolean; }
+export interface Teacher { id: number; name: string; email?: string | null; scheduleFixed?: boolean; hideWeekends?: boolean; }
 export interface Subject {
   id: number; name: string; teacherId: number; defaultDurationMin: number;
   isCollective?: boolean; scheduleFixed?: boolean; color?: string | null;

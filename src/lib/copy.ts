@@ -2,5 +2,5 @@
 export const COPY = {
   slotsRequiredLabel: "Opciones distintas de horario",
   durationLabel: "Duración de la clase",
-  slotsProgress: (done: number, required: number) => `${done}/${required} solicitudes`,
+  slotsProgress: (done: number, required: number) => `${done}/${required} preferencias`,
 } as const;

@@ -67,12 +67,6 @@ export default function manifest(): MetadataRoute.Manifest {
         url: "/students",
         icons: [{ src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
       },
-      {
-        name: "Solicitudes",
-        short_name: "Solicitudes",
-        url: "/requests",
-        icons: [{ src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
-      },
     ],
   };
 }

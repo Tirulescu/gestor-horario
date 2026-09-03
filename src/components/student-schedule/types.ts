@@ -1,4 +1,4 @@
-import type { TimeRange } from "@/lib/studentAvailability";
+import type { OccupancyKind, TimeRange } from "@/lib/studentAvailability";
 
 export interface Student {
   id: number;
@@ -42,7 +42,8 @@ export interface AssignmentRow {
 }
 
 export type TargetMode = "student" | "grade" | "multiple";
-export type ActionType = "availability" | "block" | "event";
+export type ActionType = "block" | "event";
+export type EventClassType = "subject" | "external";
 
 export interface StudentScheduleManageDialogProps {
   open: boolean;
@@ -51,17 +52,10 @@ export interface StudentScheduleManageDialogProps {
   grades: string[];
   subjects: SubjectOption[];
   subjectLinks: SubjectLink[];
-  /** Eventos/reservas del profesor (no solapables con clases). */
   teacherBlocks?: OccupiedSlot[];
-  /** Clases ya asignadas (profesor y alumnos). */
   assignments?: AssignmentRow[];
   initialStudentId?: number | null;
   saving?: boolean;
-  onApplyAvailability: (args: {
-    removes: { student: Student; ranges: TimeRange[] }[];
-    targets: Student[];
-    adds: TimeRange[];
-  }) => Promise<boolean>;
   onApplyBlocks: (args: {
     removes: { student: Student; indices: number[] }[];
     targets: Student[];
@@ -78,3 +72,5 @@ export interface StudentScheduleManageDialogProps {
     };
   }) => Promise<boolean>;
 }
+
+export type { OccupancyKind, TimeRange };

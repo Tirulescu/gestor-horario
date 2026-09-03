@@ -32,6 +32,9 @@ export async function PUT(req: NextRequest) {
   if (body.scheduleFixed !== undefined) {
     patch.scheduleFixed = Boolean(body.scheduleFixed);
   }
+  if (body.hideWeekends !== undefined) {
+    patch.hideWeekends = Boolean(body.hideWeekends);
+  }
   if (Object.keys(patch).length === 0) return apiError("Nada que actualizar");
 
   const [updated] = await db

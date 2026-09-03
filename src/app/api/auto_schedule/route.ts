@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
       : await withTeacherScheduleLock(teacherId, run);
     return Response.json(result);
   } catch (e) {
-    return apiError((e as Error).message, 500);
+    console.error("[auto_schedule]", e);
+    return apiError("Error interno al auto-agendar", 500);
   }
 }

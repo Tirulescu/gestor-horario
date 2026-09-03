@@ -16,6 +16,7 @@ export interface TeacherProfile {
   name: string;
   email?: string | null;
   scheduleFixed: boolean;
+  hideWeekends: boolean;
 }
 
 function isTeacherArray(data: unknown): data is TeacherProfile[] {
@@ -83,9 +84,17 @@ export function useTeacherProfile() {
   return {
     teacher,
     scheduleFixed: Boolean(teacher?.scheduleFixed),
+    hideWeekends: teacher?.hideWeekends ?? true,
     loading,
     saving,
     reload: load,
     toggleScheduleFixed,
   };
+}
+
+/** Lectura ligera de la preferencia hideWeekends desde la caché del profesor. */
+export function useHideWeekends(): boolean {
+  const cached = warmData<TeacherProfile[]>("/api/teachers");
+  const teacher = Array.isArray(cached) ? cached[0] : null;
+  return teacher?.hideWeekends ?? true;
 }

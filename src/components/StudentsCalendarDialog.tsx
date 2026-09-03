@@ -11,8 +11,9 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import WeekGrid, { type WeekBlock } from "@/components/WeekGrid";
 import { fmtRange, SCHEDULE_DAY_START, SCHEDULE_DAY_END } from "@/lib/hours";
 import { DAYS } from "@/lib/validate";
-import type { TimeRange } from "@/lib/studentAvailability";
+import { EXTERNAL_CLASS_COLOR, isExternalClass, type TimeRange } from "@/lib/studentAvailability";
 import { buildSubjectColorMap } from "@/lib/subjectColors";
+import { useHideWeekends } from "@/lib/useTeacherProfile";
 
 const STUDENT_COLORS = [
   "#dc2626", "#ea580c", "#c026d3", "#db2777",
@@ -54,8 +55,6 @@ interface StudentsCalendarDialogProps {
   subjects?: Subject[];
   assignments?: Assignment[];
   initialView?: ViewMode;
-  onRemoveBlock?: (student: Student, indices: number[]) => Promise<boolean | void>;
-  onRemoveEvent?: (assignmentId: number) => Promise<boolean | void>;
 }
 
 function overlaps(
@@ -72,8 +71,6 @@ function SlotOverlapDialog({
   startHour,
   endHour,
   items,
-  canDelete,
-  onRequestDelete,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -81,8 +78,6 @@ function SlotOverlapDialog({
   startHour: number;
   endHour: number;
   items: WeekBlock[];
-  canDelete: boolean;
-  onRequestDelete: (item: WeekBlock) => void;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -132,7 +127,6 @@ function SlotOverlapDialog({
           <h2 className="text-lg font-semibold leading-snug">En esta franja</h2>
           <p className="mt-1 text-sm text-gray-500">
             {title} · {items.length} elemento{items.length === 1 ? "" : "s"}
-            {canDelete ? " · puedes eliminar desde aquí" : ""}
           </p>
         </div>
         <div className="space-y-2.5 overflow-y-auto min-h-0">
@@ -164,18 +158,6 @@ function SlotOverlapDialog({
                       ))}
                     </dl>
                   )}
-                  {canDelete && item.payload && (
-                    <div className="mt-3 flex justify-end border-t border-dashed border-gray-200 pt-2.5">
-                      <button
-                        type="button"
-                        onClick={() => onRequestDelete(item)}
-                        className="inline-flex items-center justify-center w-8 h-8 rounded-full text-red-600 hover:bg-red-50"
-                        aria-label="Quitar"
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -194,9 +176,8 @@ export default function StudentsCalendarDialog({
   subjects = [],
   assignments = [],
   initialView = "blocks",
-  onRemoveBlock,
-  onRemoveEvent,
 }: StudentsCalendarDialogProps) {
+  const hideWeekends = useHideWeekends();
   const [view, setView] = useState<ViewMode>(initialView);
   const [gradeFilter, setGradeFilter] = useState("all");
   const [studentFilter, setStudentFilter] = useState("all");
@@ -273,25 +254,24 @@ export default function StudentsCalendarDialog({
     for (const s of filteredStudents) {
       const color = colorByStudent[s.id] ?? "#dc2626";
       (s.blockedRanges ?? []).forEach((r, i) => {
-        const name = r.title?.trim() || "Bloqueo";
+        const externalClass = isExternalClass(r);
+        const name = r.title?.trim() || (externalClass ? "Clase del centro" : "Bloqueo");
         out.push({
           id: s.id * 1000 + i,
           dayOfWeek: r.day,
           startHour: r.start,
           endHour: r.end,
           title: name,
-          subtitle: s.name,
-          color,
+          subtitle: undefined,
+          color: externalClass ? EXTERNAL_CLASS_COLOR : color,
           detailTitle: name,
           details: [
             { label: "Alumno", value: s.name },
-            ...(s.grade ? [{ label: "Curso", value: s.grade }] : []),
-            { label: "Tipo", value: "Bloqueo" },
+            { label: "Tipo", value: externalClass ? "Clase del centro" : "Bloqueo" },
             { label: "Nombre", value: name },
             { label: "Día", value: DAYS[r.day] },
             { label: "Horario", value: fmtRange(r.start, r.end) },
           ],
-          payload: { kind: "student-block", studentId: s.id, blockIndex: i },
         });
       });
     }
@@ -310,31 +290,27 @@ export default function StudentsCalendarDialog({
           a.subject?.name ??
           subjects.find((s) => s.id === a.subjectId)?.name ??
           "Asignatura";
-        const grade = students.find((s) => s.id === a.studentId)?.grade;
         return {
           id: a.id,
           dayOfWeek: a.dayOfWeek,
           startHour: a.startHour,
           endHour: a.endHour,
           title: subjectName,
-          subtitle: studentName,
+          subtitle: undefined,
           color: subjectColor[a.subjectId] ?? "#2563eb",
           detailTitle: subjectName,
           details: [
             { label: "Alumno", value: studentName },
-            ...(grade ? [{ label: "Curso", value: grade }] : []),
             { label: "Tipo", value: "Clase" },
             { label: "Asignatura", value: subjectName },
             { label: "Día", value: DAYS[a.dayOfWeek] },
             { label: "Horario", value: fmtRange(a.startHour, a.endHour) },
           ],
-          payload: { kind: "assignment", assignmentId: a.id, studentId: a.studentId },
         } satisfies WeekBlock;
       });
   }, [assignments, filteredStudentIds, students, subjects, subjectColor]);
 
   const items = view === "blocks" ? blockItems : eventItems;
-  const canDelete = view === "blocks" ? !!onRemoveBlock : !!onRemoveEvent;
 
   const legend = useMemo(() => {
     if (view === "blocks") {
@@ -364,22 +340,6 @@ export default function StudentsCalendarDialog({
       .filter((b) => overlaps(b, slotFocus))
       .sort((a, b) => a.startHour - b.startHour || a.title.localeCompare(b.title));
   }, [items, slotFocus]);
-
-  const requestDelete = useCallback(async (item: WeekBlock) => {
-    const p = item.payload;
-    if (!p) return;
-    if (p.kind === "student-block" && p.studentId != null && p.blockIndex != null) {
-      const student = students.find((s) => s.id === p.studentId);
-      if (!student) return;
-      await onRemoveBlock?.(student, [p.blockIndex]);
-      closeSlot();
-      return;
-    }
-    if (p.kind === "assignment" && p.assignmentId != null) {
-      await onRemoveEvent?.(p.assignmentId);
-      closeSlot();
-    }
-  }, [students, onRemoveBlock, onRemoveEvent, closeSlot]);
 
   const emptyMessage = view === "blocks"
     ? "Ningún bloqueo con los filtros seleccionados."
@@ -454,6 +414,7 @@ export default function StudentsCalendarDialog({
               hourHeight={64}
               startH={SCHEDULE_DAY_START}
               endH={SCHEDULE_DAY_END}
+              hideWeekends={hideWeekends}
               inDialog
               allowFullscreen
               fullscreenTitle={view === "blocks" ? "Bloqueos de alumnos" : "Clases de alumnos"}
@@ -466,7 +427,7 @@ export default function StudentsCalendarDialog({
 
           {items.length > 0 && (
             <p className="text-xs text-gray-500">
-              Pulsa un bloque para ver el detalle{canDelete ? " y eliminarlo" : ""}.
+              Pulsa un bloque para ver el detalle.
             </p>
           )}
         </div>
@@ -482,8 +443,6 @@ export default function StudentsCalendarDialog({
           startHour={slotFocus?.startHour ?? 0}
           endHour={slotFocus?.endHour ?? 0}
           items={overlapping}
-          canDelete={canDelete}
-          onRequestDelete={requestDelete}
         />
       </DialogContent>
     </Dialog>

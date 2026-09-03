@@ -105,6 +105,8 @@ interface WeekGridProps {
   fullscreenTitle?: string;
   /** Variante para uso dentro de diálogos. */
   inDialog?: boolean;
+  /** Oculta sábado (5) y domingo (6). */
+  hideWeekends?: boolean;
 }
 
 export default function WeekGrid({
@@ -125,6 +127,7 @@ export default function WeekGrid({
   allowFullscreen = false,
   fullscreenTitle = "Horario semanal",
   inDialog = false,
+  hideWeekends = false,
 }: WeekGridProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -196,6 +199,12 @@ export default function WeekGrid({
     return hours.filter((h) => Number.isFinite(h));
   }, [blocks, unavailable, availableZones, blockedZones]);
 
+  const visibleDays = useMemo(
+    () => hideWeekends ? [0, 1, 2, 3, 4] : [0, 1, 2, 3, 4, 5, 6],
+    [hideWeekends],
+  );
+  const dayCount = visibleDays.length;
+
   const todayIdx = (new Date().getDay() + 6) % 7;
   const now = new Date();
   const nowHour = now.getHours() + now.getMinutes() / 60;
@@ -237,27 +246,21 @@ export default function WeekGrid({
 
   /** Carriles paralelos por día (mín. 1): define el ancho relativo de cada columna. */
   const dayLaneCounts = useMemo(() => {
-    const counts: number[] = [];
-    for (let day = 0; day < 7; day++) {
-      const dayLayout = layout[day];
-      counts.push(dayLayout?.[0]?.cols ?? 1);
-    }
-    return counts;
-  }, [layout]);
+    return visibleDays.map((day) => layout[day]?.[0]?.cols ?? 1);
+  }, [layout, visibleDays]);
 
   /** Ancho fijo por día = texto más largo × carriles (sin base grande ni crecimiento fr). */
   const dayMinWidthsPx = useMemo(() => {
-    return dayLaneCounts.map((_lanes, day) => {
+    return visibleDays.map((day) => {
       const dayLayout = layout[day] ?? [];
       if (dayLayout.length === 0) return EMPTY_DAY_MIN_PX;
       let maxLaneContent = 0;
       for (const { block, cols } of dayLayout) {
-        // Cada bloque solo ocupa 1/cols del día → el día debe ser cols × ancho del texto
         maxLaneContent = Math.max(maxLaneContent, estimateBlockContentPx(block, compact) * cols);
       }
       return Math.max(EMPTY_DAY_MIN_PX, maxLaneContent);
     });
-  }, [dayLaneCounts, layout, compact, mounted]);
+  }, [visibleDays, layout, compact, mounted]);
 
   const gridContentMinPx = useMemo(
     () => dayMinWidthsPx.reduce((sum, w) => sum + w, 0),
@@ -265,7 +268,7 @@ export default function WeekGrid({
   );
 
   const colTemplate = shouldFitViewport
-    ? `var(--weekgrid-gutter, 52px) repeat(7, 1fr)`
+    ? `var(--weekgrid-gutter, 52px) repeat(${dayCount}, 1fr)`
     : `var(--weekgrid-gutter, 52px) ${dayMinWidthsPx.map((px) => `${px}px`).join(" ")}`;
 
   const defaultLegend = useMemo(() => {
@@ -435,9 +438,9 @@ export default function WeekGrid({
               }}
             >
               <div className="weekgrid-pro-corner">Hora</div>
-              {DAYS.map((d, day) => (
-                <div key={d} className={"weekgrid-pro-day" + (day === todayIdx ? " is-today" : "")}>
-                  <span className="weekgrid-pro-day-label">{d}</span>
+              {visibleDays.map((day) => (
+                <div key={day} className={"weekgrid-pro-day" + (day === todayIdx ? " is-today" : "")}>
+                  <span className="weekgrid-pro-day-label">{DAYS[day]}</span>
                   {day === todayIdx && <span className="today-tag">hoy</span>}
                 </div>
               ))}
@@ -471,7 +474,7 @@ export default function WeekGrid({
               ))}
             </div>
 
-            {DAYS.map((_, day) => (
+            {visibleDays.map((day) => (
               <div
                 key={day}
                 className={"weekgrid-pro-col" + (day === todayIdx ? " is-today-col" : "")}

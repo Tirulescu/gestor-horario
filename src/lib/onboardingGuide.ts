@@ -109,7 +109,7 @@ export function buildGuideSteps(data: OnboardingData): GuideStep[] {
     {
       id: "students",
       label: "Añadir alumnos",
-      tip: "Registra a tus alumnos e inscríbelos en las asignaturas. Puedes indicar curso y correo para localizarlos rápido.",
+      tip: "Registra a tus alumnos e inscríbelos en tus asignaturas. En Editar cambias datos, matrícula, disponibilidad y las franjas ya creadas. Con Añadir al horario creas clases (tuyas o de otras del centro) y bloqueos (actividades fuera del centro).",
       done: data.studentsCount > 0,
       href: "/students",
       hrefLabel: "Ir a alumnos",
@@ -125,12 +125,12 @@ export function buildGuideSteps(data: OnboardingData): GuideStep[] {
     {
       id: "requests",
       label: data.incompleteRequests > 0
-        ? `Completar solicitudes (${data.incompleteRequests} pendiente${data.incompleteRequests !== 1 ? "s" : ""})`
-        : "Completar solicitudes de horario",
+        ? `Completar preferencias (${data.incompleteRequests} pendiente${data.incompleteRequests !== 1 ? "s" : ""})`
+        : "Completar preferencias horarias",
       tip: "Cada alumno elige sus preferencias de día y hora por asignatura. Cuanto más completas, mejor encaja el horario.",
       done: requestsDone,
       href: "/requests",
-      hrefLabel: "Ir a solicitudes",
+      hrefLabel: "Ir a preferencias",
     },
     {
       id: "schedule",

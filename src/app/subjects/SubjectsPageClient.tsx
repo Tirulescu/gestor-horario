@@ -4,7 +4,7 @@ import { warmData, put, invalidate, fetchApi, prefetchSubjectDetail } from "@/li
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Pencil, Trash2, Save, X, BookOpen, Clock, ChevronRight, Users } from "lucide-react";
+import { Pencil, Trash2, Save, X, BookOpen, Clock, ChevronRight, Users, Inbox } from "lucide-react";
 import EmptyState from "@/components/EmptyState";
 import FloatingActionButton from "@/components/FloatingActionButton";
 import SubjectColorPicker from "@/components/SubjectColorPicker";
@@ -175,7 +175,11 @@ export default function SubjectsPageClient() {
         icon={BookOpen}
         title="Asignaturas"
         description="Configura materias, duración y alumnos inscritos."
-        actions={undefined}
+        actions={
+          <Button variant="default" size="sm" asChild>
+            <Link href="/requests"><Inbox size={14} /> Preferencia horaria</Link>
+          </Button>
+        }
       />
 
       {subjects === null ? (

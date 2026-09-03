@@ -34,7 +34,7 @@ export function SlotRow({ r, ri, total, busy, moveSlot, openEdit, setConfirmTarg
       </span>
       {!readOnly && (
         <div className="flex items-center gap-1 shrink-0 ml-auto">
-          <Button size="iconSm" variant="outline" onClick={() => openEdit(r)} aria-label="Editar solicitud"><Pencil size={12} /></Button>
+          <Button size="iconSm" variant="outline" onClick={() => openEdit(r)} aria-label="Editar preferencia"><Pencil size={12} /></Button>
           <Button size="iconSm" variant="destructive" onClick={() => setConfirmTarget({ kind: "slot", id: r.id, label: `¿Borrar ${DAYS[r.dayOfWeek]} ${fmtRange(r.startHour, r.endHour)} de ${m.student.name}?` })} aria-label="Borrar"><Trash2 size={12} /></Button>
         </div>
       )}

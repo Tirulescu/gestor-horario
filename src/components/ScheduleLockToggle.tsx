@@ -51,7 +51,7 @@ export default function ScheduleLockToggle() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Fijar horario?</AlertDialogTitle>
             <AlertDialogDescription>
-              Se bloqueará el auto-agendado y toda edición del plan (horarios, alumnos, asignaturas y solicitudes).
+              Se bloqueará el auto-agendado y toda edición del plan (horarios, alumnos, asignaturas y preferencias horarias).
               Solo podrás consultar el detalle y ver las clases de hoy.
             </AlertDialogDescription>
           </AlertDialogHeader>

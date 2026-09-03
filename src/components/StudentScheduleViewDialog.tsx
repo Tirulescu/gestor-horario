@@ -8,7 +8,9 @@ import {
 import WeekGrid, { type WeekBlock } from "@/components/WeekGrid";
 import { fmtDayRange, fmtRange, fmtDurationMin, SCHEDULE_DAY_START, SCHEDULE_DAY_END } from "@/lib/hours";
 import { DAYS } from "@/lib/validate";
+import { useHideWeekends } from "@/lib/useTeacherProfile";
 import {
+  isExternalClass,
   rangesToZones,
   teacherAvailsToRanges,
   unavailableOutsideAvailable,
@@ -51,6 +53,7 @@ export default function StudentScheduleViewDialog({
   assignments: allAssignments = [],
   teacherAvailabilities = [],
 }: StudentScheduleViewDialogProps) {
+  const hideWeekends = useHideWeekends();
   const assignments = useMemo(
     () => (student ? allAssignments.filter((a) => a.studentId === student.id) : []),
     [allAssignments, student?.id],
@@ -96,7 +99,7 @@ export default function StudentScheduleViewDialog({
       items.push({ label: "Profesor no disponible", color: "#94a3b8", striped: true });
     }
     if (ranges.length > 0) items.push({ label: "Disponible (alumno)", color: "#22c55e", dashed: true });
-    if (blocked.length > 0) items.push({ label: "Bloqueado", color: "#ef4444" });
+    if (blocked.length > 0) items.push({ label: "Ocupaciones", color: "#ef4444" });
     const scheduledIds = new Set(assignments.map((a) => a.subjectId));
     for (const sub of subjects) {
       if (scheduledIds.has(sub.id)) {
@@ -129,6 +132,7 @@ export default function StudentScheduleViewDialog({
             hourHeight={64}
             startH={SCHEDULE_DAY_START}
             endH={SCHEDULE_DAY_END}
+            hideWeekends={hideWeekends}
             inDialog
             allowFullscreen
             fullscreenTitle={student ? `Horario de ${student.name}` : "Horario del alumno"}
@@ -156,10 +160,11 @@ export default function StudentScheduleViewDialog({
               )}
               {blocked.length > 0 && (
                 <div className="rounded-lg border border-red-100 bg-red-50/60 p-3 space-y-1.5">
-                  <p className="font-medium text-red-900">Bloqueos</p>
+                  <p className="font-medium text-red-900">Ocupaciones</p>
                   <div className="flex flex-wrap gap-1">
                     {blocked.map((r, i) => (
                       <span key={i} className="rounded-full bg-white/80 border border-red-200 px-2 py-0.5 text-red-800">
+                        {isExternalClass(r) ? "Clase · " : "Bloqueo · "}
                         {r.title?.trim() ? `${r.title.trim()} · ` : ""}{fmtDayRange(r.day, r.start, r.end)}
                       </span>
                     ))}

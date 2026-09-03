@@ -37,7 +37,7 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/~offline");
 
   if (isApiRoute || pathname.startsWith("/auth/")) {
-    const rate = checkRateLimit(request);
+    const rate = checkRateLimit(request, user?.id);
     if (!rate.ok) {
       return NextResponse.json(
         { error: "Demasiadas peticiones. Inténtalo en un momento." },

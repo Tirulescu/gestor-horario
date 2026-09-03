@@ -41,14 +41,14 @@ export function MemberCard({ m, mi, total, reqs, busy, moveMember, moveSlot, han
       </div>
       {!readOnly && (
         <Button size="sm" variant="outline" className="w-full sm:w-auto shrink-0" onClick={() => openAdd(m.studentId)}>
-          <Plus size={14} /> <span className="sm:hidden">Añadir</span><span className="hidden sm:inline">Añadir solicitud</span>
+          <Plus size={14} /> <span className="sm:hidden">Añadir</span><span className="hidden sm:inline">Añadir preferencia</span>
         </Button>
       )}
     </div>
   );
 
   const slots = reqs.length === 0 ? (
-    <p className="text-sm text-gray-400">Sin solicitudes de horario</p>
+    <p className="text-sm text-gray-400">Sin preferencias horarias</p>
   ) : readOnly ? (
     <div className="space-y-1.5">
       {reqs.map((r, ri) => (

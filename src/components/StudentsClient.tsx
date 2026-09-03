@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Save, X, GraduationCap, Calendar, CalendarClock, CalendarDays, Mail, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, X, GraduationCap, Calendar, CalendarDays, Mail, Search } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
@@ -20,11 +21,12 @@ import FloatingActionButton from "@/components/FloatingActionButton";
 import { TableCardSkeleton } from "@/components/skeletons";
 import { warmData, put, invalidate, invalidateMany, hasFreshAll, STUDENTS_ENDPOINTS, fetchApi, onCacheStale } from "@/lib/clientCache";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
-import { fmtDayRange } from "@/lib/hours";
+import { fmtDayRange, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END } from "@/lib/hours";
+import { DAYS } from "@/lib/validate";
 import StudentScheduleViewDialog from "@/components/StudentScheduleViewDialog";
 import StudentScheduleManageDialog from "@/components/StudentScheduleManageDialog";
 import StudentsCalendarDialog from "@/components/StudentsCalendarDialog";
-import { carveAvailabilityAroundBlocked, type TimeRange } from "@/lib/studentAvailability";
+import { carveAvailabilityAroundBlocked, isExternalClass, type TimeRange } from "@/lib/studentAvailability";
 
 interface Subject { id: number; name: string; defaultDurationMin: number; isCollective?: boolean; }
 interface Student {
@@ -91,6 +93,17 @@ export default function StudentsClient() {
   const [fEmail, setFEmail] = useState("");
   const [selSubjects, setSelSubjects] = useState<Set<number>>(new Set());
   const [initialSubjects, setInitialSubjects] = useState<Set<number>>(new Set());
+  const [editRemoveAvail, setEditRemoveAvail] = useState<Set<number>>(new Set());
+  const [editAvailEdits, setEditAvailEdits] = useState<Record<number, TimeRange>>({});
+  const [availEditIndex, setAvailEditIndex] = useState<number | null>(null);
+  const [editRemoveBlocks, setEditRemoveBlocks] = useState<Set<number>>(new Set());
+  const [editRemoveEvents, setEditRemoveEvents] = useState<Set<number>>(new Set());
+  const [editBlockedEdits, setEditBlockedEdits] = useState<Record<number, TimeRange>>({});
+  const [editEventEdits, setEditEventEdits] = useState<
+    Record<number, { dayOfWeek: number; startHour: number; endHour: number }>
+  >({});
+  const [blockedEditIndex, setBlockedEditIndex] = useState<number | null>(null);
+  const [eventEditId, setEventEditId] = useState<number | null>(null);
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewStudent, setViewStudent] = useState<Student | null>(null);
@@ -210,6 +223,15 @@ export default function StudentsClient() {
     setFName(""); setFGrade(""); setFEmail("");
     setSelSubjects(new Set());
     setInitialSubjects(new Set());
+    setEditRemoveAvail(new Set());
+    setEditAvailEdits({});
+    setAvailEditIndex(null);
+    setEditRemoveBlocks(new Set());
+    setEditRemoveEvents(new Set());
+    setEditBlockedEdits({});
+    setEditEventEdits({});
+    setBlockedEditIndex(null);
+    setEventEditId(null);
     setEditOpen(true);
   }
 
@@ -221,6 +243,15 @@ export default function StudentsClient() {
     );
     setSelSubjects(subs);
     setInitialSubjects(subs);
+    setEditRemoveAvail(new Set());
+    setEditAvailEdits({});
+    setAvailEditIndex(null);
+    setEditRemoveBlocks(new Set());
+    setEditRemoveEvents(new Set());
+    setEditBlockedEdits({});
+    setEditEventEdits({});
+    setBlockedEditIndex(null);
+    setEventEditId(null);
     setEditOpen(true);
   }
 
@@ -229,11 +260,6 @@ export default function StudentsClient() {
     setViewOpen(true);
   }
 
-  function openScheduleManage(studentId: number | null = null) {
-    if ((students ?? []).length === 0) return toast("error", "No hay alumnos todavía");
-    setManageStudentId(studentId);
-    setManageOpen(true);
-  }
 
   function subjectsEqual(a: Set<number>, b: Set<number>) {
     if (a.size !== b.size) return false;
@@ -329,7 +355,7 @@ export default function StudentsClient() {
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
       invalidate("/api/students");
-      await load({ force: true });
+      void load({ force: true });
       return true;
     } finally {
       setSaving(false);
@@ -371,7 +397,15 @@ export default function StudentsClient() {
             const dup =
               cur.some((b) => b.day === r.day && r.end > b.start && r.start < b.end) ||
               toAdd.some((b) => b.day === r.day && r.end > b.start && r.start < b.end);
-            if (!dup) toAdd.push({ day: r.day, start: r.start, end: r.end, ...(title ? { title } : {}) });
+            if (!dup) {
+              toAdd.push({
+                day: r.day,
+                start: r.start,
+                end: r.end,
+                kind: r.kind === "class" ? "class" : "block",
+                ...(title ? { title } : {}),
+              });
+            }
           }
           if (toAdd.length === 0) continue;
           const nextBlocked = [...cur, ...toAdd];
@@ -405,7 +439,7 @@ export default function StudentsClient() {
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
       invalidate("/api/students");
-      await load({ force: true });
+      void load({ force: true });
       return true;
     } finally {
       setSaving(false);
@@ -483,50 +517,32 @@ export default function StudentsClient() {
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
       invalidateMany(["/api/assignments", "/api/subject_students", "/api/students"]);
-      await load({ force: true });
+      void load({ force: true });
       return true;
     } finally {
       setSaving(false);
     }
   }
 
-  // Usados por el calendario (borrado individual).
-  async function removeBlock(st: Student, indices: number[]): Promise<boolean> {
-    if (indices.length === 0) return true;
-    const drop = new Set(indices);
-    const nr = (st.blockedRanges ?? []).filter((_, i) => !drop.has(i));
-    const ok = await updateStudentRanges(st, { blockedRanges: nr });
-    if (!ok) {
-      toast("error", "No se pudo quitar el bloqueo");
-      return false;
-    }
-    toast("success", indices.length === 1 ? "Bloqueo quitado" : `${indices.length} bloqueos quitados`);
-    invalidate("/api/students");
-    await load({ force: true });
-    return true;
-  }
-
-  async function removeEvent(assignmentId: number): Promise<boolean> {
-    const res = await fetch(`/api/assignments?id=${assignmentId}`, { method: "DELETE" });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      toast("error", d.error || "No se pudo eliminar la clase");
-      return false;
-    }
-    toast("success", "Clase eliminada");
-    invalidateMany(["/api/assignments", "/api/subject_students"]);
-    await load({ force: true });
-    return true;
-  }
-
   async function saveStudent() {
     if (!fName.trim()) return toast("error", "Falta el nombre");
+    const noRangeRemovals =
+      editRemoveAvail.size === 0 &&
+      editRemoveBlocks.size === 0 &&
+      editRemoveEvents.size === 0;
+    const noAvailEdits = Object.keys(editAvailEdits).length === 0;
+    const noBlockedEdits = Object.keys(editBlockedEdits).length === 0;
+    const noEventEdits = Object.keys(editEventEdits).length === 0;
     if (
       editing &&
       fName.trim() === editing.name &&
       fGrade.trim() === (editing.grade ?? "") &&
       fEmail.trim() === (editing.email ?? "") &&
-      subjectsEqual(selSubjects, initialSubjects)
+      subjectsEqual(selSubjects, initialSubjects) &&
+      noRangeRemovals &&
+      noAvailEdits &&
+      noBlockedEdits &&
+      noEventEdits
     ) {
       setEditOpen(false);
       return;
@@ -541,7 +557,7 @@ export default function StudentsClient() {
     });
     if (!res.ok) {
       setSaving(false);
-      return toast("error", (await res.json().catch(() => ({}))).error || "Error");
+      return toast("error", (await res.json().catch(() => ({}))).error || "Error al guardar los datos del alumno");
     }
     const saved: Student = await res.json();
     const rows = subjectLinks.filter((r) => r.studentId === saved.id);
@@ -566,11 +582,110 @@ export default function StudentsClient() {
         }
       }
     }
+    if (editing) {
+      const fresh = (students ?? []).find((x) => x.id === editing.id) ?? editing;
+      const curAvail = fresh.availableRanges ?? [];
+      const curBlocks = fresh.blockedRanges ?? [];
+      const nextAvail: TimeRange[] = [];
+      for (let i = 0; i < curAvail.length; i++) {
+        if (editRemoveAvail.has(i)) continue;
+        nextAvail.push(editAvailEdits[i] ?? curAvail[i]);
+      }
+      const nextBlocks: TimeRange[] = [];
+      for (let i = 0; i < curBlocks.length; i++) {
+        if (editRemoveBlocks.has(i)) continue;
+        nextBlocks.push(editBlockedEdits[i] ?? curBlocks[i]);
+      }
+
+      const availChanged = nextAvail.length !== curAvail.length || editRemoveAvail.size > 0 || Object.keys(editAvailEdits).length > 0 || nextAvail.some((r, i) => {
+        const c = curAvail[i];
+        return !c || c.day !== r.day || c.start !== r.start || c.end !== r.end;
+      });
+      const blocksChanged = nextBlocks.length !== curBlocks.length || nextBlocks.some((r, i) => {
+        const c = curBlocks.filter((_, idx) => !editRemoveBlocks.has(idx))[i];
+        return !c || c.day !== r.day || c.start !== r.start || c.end !== r.end || (c.kind ?? "block") !== (r.kind ?? "block") || (c.title ?? "") !== (r.title ?? "");
+      });
+
+      if (availChanged || blocksChanged) {
+        const ok = await updateStudentRanges(fresh, {
+          availableRanges: availChanged ? nextAvail : undefined,
+          blockedRanges: blocksChanged ? nextBlocks : undefined,
+        } as { availableRanges?: TimeRange[]; blockedRanges?: TimeRange[] });
+        if (!ok) {
+          setSaving(false);
+          return toast("error", "No se pudieron guardar los cambios de disponibilidad u ocupaciones del alumno");
+        }
+      }
+
+      // Borrar clases/ocupaciones por tipo de clase (asignaciones) antes de parchear ediciones.
+      for (const id of editRemoveEvents) {
+        const resDel = await fetch(`/api/assignments?id=${id}`, { method: "DELETE" });
+        if (!resDel.ok) {
+          setSaving(false);
+          return toast("error", "No se pudo eliminar la clase del alumno. Inténtalo de nuevo.");
+        }
+      }
+
+      for (const [k, v] of Object.entries(editEventEdits)) {
+        const id = Number(k);
+        if (!Number.isFinite(id) || editRemoveEvents.has(id)) continue;
+        const resPatch = await fetch("/api/assignments", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            dayOfWeek: v.dayOfWeek,
+            startHour: v.startHour,
+            endHour: v.endHour,
+          }),
+        });
+        if (!resPatch.ok) {
+          setSaving(false);
+          const d = await resPatch.json().catch(() => ({}));
+          return toast("error", d.error || "No se pudo modificar una clase");
+        }
+      }
+    }
+    // Capturar valores para el toast ANTES de resetear estados
+    const _availRemoved = editRemoveAvail.size;
+    const _availEditsCount = Object.keys(editAvailEdits).map(Number).filter((i) => !editRemoveAvail.has(i)).length;
+    const _blocksRemoved = editRemoveBlocks.size;
+    const _eventsRemoved = editRemoveEvents.size;
+    const _blockedEditsCount = Object.keys(editBlockedEdits).map(Number).filter((i) => !editRemoveBlocks.has(i)).length;
+    const _eventsEditsCount = Object.keys(editEventEdits).map(Number).filter((id) => !editRemoveEvents.has(id)).length;
+    const _nameChanged = editing ? fName.trim() !== editing.name : false;
+    const _gradeChanged = editing ? fGrade.trim() !== (editing.grade ?? "") : false;
+    const _emailChanged = editing ? fEmail.trim() !== (editing.email ?? "") : false;
+    const _subjectsChanged = !subjectsEqual(selSubjects, initialSubjects);
+
     setSaving(false);
     setEditOpen(false);
-    toast("success", editing ? "Alumno actualizado" : "Alumno creado");
-    invalidateMany(["/api/students", "/api/subject_students", "/api/subjects"]);
-    await load({ force: true });
+    setEditRemoveAvail(new Set());
+    setEditAvailEdits({});
+    setAvailEditIndex(null);
+    setEditRemoveBlocks(new Set());
+    setEditRemoveEvents(new Set());
+    setEditBlockedEdits({});
+    setEditEventEdits({});
+    setBlockedEditIndex(null);
+    setEventEditId(null);
+
+    if (editing) {
+      const parts: string[] = [];
+      if (_nameChanged || _gradeChanged || _emailChanged) parts.push("Datos del alumno actualizados");
+      if (_subjectsChanged) parts.push("Matrícula actualizada");
+      if (_availRemoved > 0) parts.push(_availRemoved === 1 ? "1 franja de disponibilidad quitada" : `${_availRemoved} franjas de disponibilidad quitadas`);
+      if (_availEditsCount > 0) parts.push(_availEditsCount === 1 ? "1 franja de disponibilidad modificada" : `${_availEditsCount} franjas de disponibilidad modificadas`);
+      if (_blocksRemoved > 0) parts.push(_blocksRemoved === 1 ? "1 ocupación quitada" : `${_blocksRemoved} ocupaciones quitadas`);
+      if (_blockedEditsCount > 0) parts.push(_blockedEditsCount === 1 ? "1 ocupación modificada" : `${_blockedEditsCount} ocupaciones modificadas`);
+      if (_eventsRemoved > 0) parts.push(_eventsRemoved === 1 ? "1 clase eliminada" : `${_eventsRemoved} clases eliminadas`);
+      if (_eventsEditsCount > 0) parts.push(_eventsEditsCount === 1 ? "1 clase modificada" : `${_eventsEditsCount} clases modificadas`);
+      toast("success", parts.length === 0 ? "Cambios guardados" : parts.join(" · "));
+    } else {
+      toast("success", "Alumno creado");
+    }
+    invalidateMany(["/api/students", "/api/subject_students", "/api/subjects", "/api/assignments"]);
+    void load({ force: true });
   }
 
   async function doDelete() {
@@ -579,9 +694,9 @@ export default function StudentsClient() {
     const res = await fetch(`/api/students?id=${confirmDel.id}`, { method: "DELETE" });
     setDeleting(false);
     setConfirmDel(null);
-    if (!res.ok) return toast("error", "No se pudo borrar");
+    if (!res.ok) return toast("error", "No se pudo borrar el alumno. Puede que tenga clases asignadas.");
     invalidate("/api/students"); invalidate("/api/subject_students"); toast("success", "Alumno borrado");
-    await load({ force: true });
+    void load({ force: true });
   }
 
   const viewStudentFresh = viewStudent
@@ -593,7 +708,7 @@ export default function StudentsClient() {
       <PageHeader
         icon={GraduationCap}
         title="Alumnos"
-        description="Datos, disponibilidad y bloqueos de alumnos."
+        description="Gestiona tus alumnos."
         actions={
           <>
             <Button
@@ -622,13 +737,7 @@ export default function StudentsClient() {
               <span className="sm:hidden">Calendario</span>
               <span className="hidden sm:inline">Ver calendarios</span>
             </Button>
-            {!scheduleLocked && (
-              <Button variant="outline" onClick={() => openScheduleManage()}>
-                <CalendarClock size={16} />
-                <span className="sm:hidden">Horario</span>
-                <span className="hidden sm:inline">Gestionar horario</span>
-              </Button>
-            )}
+            
           </>
         }
       />
@@ -694,7 +803,10 @@ export default function StudentsClient() {
                   </Button>
                   {!scheduleLocked && (
                     <>
-                      <Button size="iconSm" variant="outline" onClick={() => openEdit(s)} aria-label="Editar datos" title="Editar datos">
+                      <Button size="iconSm" variant="outline" onClick={() => { setManageStudentId(s.id); setManageOpen(true); }} aria-label="Añadir al horario" title="Añadir al horario">
+                        <Plus size={14} />
+                      </Button>
+                      <Button size="iconSm" variant="outline" onClick={() => openEdit(s)} aria-label="Editar alumno" title="Editar alumno">
                         <Pencil size={14} />
                       </Button>
                       <Button size="iconSm" variant="destructive" onClick={() => setConfirmDel(s)} aria-label="Borrar">
@@ -728,13 +840,14 @@ export default function StudentsClient() {
               </div>
 
               <div className="entity-card-section">
-                <div className="entity-card-label">Horas bloqueadas</div>
+                <div className="entity-card-label">Ocupaciones</div>
                 <div className="entity-card-chips">
                   {(s.blockedRanges ?? []).length === 0 ? (
                     <span className="text-gray-400 text-xs">Ninguna</span>
                   ) : (
                     (s.blockedRanges ?? []).map((b, i) => (
-                      <Badge key={i} variant="danger" className="font-normal whitespace-normal text-left leading-snug">
+                      <Badge key={i} variant={isExternalClass(b) ? "gray" : "danger"} className="font-normal whitespace-normal text-left leading-snug">
+                        {isExternalClass(b) ? "Clase · " : "Bloqueo · "}
                         {b.title?.trim() ? `${b.title.trim()} · ` : ""}{fmtDayRange(b.day, b.start, b.end)}
                       </Badge>
                     ))
@@ -795,6 +908,282 @@ export default function StudentsClient() {
                 </div>
               )}
             </div>
+
+            {editing && (
+              <>
+                <div>
+                  <Label>Disponibilidad</Label>
+                  {(editing.availableRanges ?? []).length === 0 ? (
+                    <p className="text-xs text-gray-500 mt-1">Sin disponibilidad definida.</p>
+                  ) : (
+                    <div className="space-y-2 mt-2">
+                      {(editing.availableRanges ?? []).map((r, i) => {
+                        const marked = editRemoveAvail.has(i);
+                        const edited = editAvailEdits[i];
+                        const shown = edited ?? r;
+                        return (
+                          <div
+                            key={`avail-${i}:${r.day}:${r.start}:${r.end}`}
+                            className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                              marked
+                                ? "opacity-60 line-through border-red-200 bg-red-50"
+                                : "border-emerald-200 bg-emerald-50"
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium truncate">
+                                {fmtDayRange(shown.day, shown.start, shown.end)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                size="iconSm"
+                                variant="outline"
+                                disabled={marked}
+                                onClick={() => setAvailEditIndex(i)}
+                                aria-label="Editar"
+                                title="Editar"
+                              >
+                                <Pencil size={14} />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="iconSm"
+                                variant="destructive"
+                                onClick={() => {
+                                  setEditRemoveAvail((prev) => {
+                                    const n = new Set(prev);
+                                    if (n.has(i)) n.delete(i); else n.add(i);
+                                    return n;
+                                  });
+                                  if (!marked) {
+                                    setEditAvailEdits((prev) => {
+                                      const { [i]: _, ...rest } = prev;
+                                      return rest;
+                                    });
+                                  }
+                                }}
+                                aria-label={marked ? "Deshacer borrado" : "Borrar"}
+                                title={marked ? "Deshacer" : "Borrar"}
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <Label>Ocupaciones</Label>
+                  {(editing.blockedRanges ?? []).length === 0 ? (
+                    <p className="text-xs text-gray-500 mt-1">Sin ocupaciones.</p>
+                  ) : (
+                    <div className="space-y-2 mt-2">
+                      {(editing.blockedRanges ?? []).map((r, i) => {
+                        const marked = editRemoveBlocks.has(i);
+                        const edited = editBlockedEdits[i];
+                        const shown = edited ?? r;
+                        return (
+                          <div
+                            key={`${i}:${r.day}:${r.start}:${r.end}:${r.title ?? ""}`}
+                            className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                              marked
+                                ? "opacity-60 line-through border-red-200 bg-red-50"
+                                : isExternalClass(shown)
+                                  ? "border-gray-200 bg-gray-50"
+                                  : "border-red-200 bg-red-50"
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium truncate">
+                                {isExternalClass(shown) ? "Clase · " : "Bloqueo · "}
+                                {shown.title?.trim() ? `${shown.title.trim()} · ` : ""}
+                                {fmtDayRange(shown.day, shown.start, shown.end)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                size="iconSm"
+                                variant="outline"
+                                disabled={marked}
+                                onClick={() => setBlockedEditIndex(i)}
+                                aria-label="Editar"
+                                title="Editar"
+                              >
+                                <Pencil size={14} />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="iconSm"
+                                variant="destructive"
+                                onClick={() => {
+                                  setEditRemoveBlocks((prev) => {
+                                    const n = new Set(prev);
+                                    if (n.has(i)) n.delete(i);
+                                    else n.add(i);
+                                    return n;
+                                  });
+                                  setEditBlockedEdits((prev) => {
+                                    if (!marked) {
+                                      const { [i]: _, ...rest } = prev;
+                                      return rest;
+                                    }
+                                    return prev;
+                                  });
+                                }}
+                                aria-label={marked ? "Deshacer borrado" : "Borrar"}
+                                title={marked ? "Deshacer" : "Borrar"}
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <Label>Clases en tus asignaturas</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">Las clases colectivas solo pueden editarse desde Asignaturas. Aquí puedes desvincular al alumno.</p>
+                  {assignments.filter((a) => a.studentId === editing.id).length === 0 ? (
+                    <p className="text-xs text-gray-500 mt-1">Sin clases creadas.</p>
+                  ) : (
+                    <div className="space-y-2 mt-2">
+                      {assignments.filter((a) => a.studentId === editing.id).map((a) => {
+                        const marked = editRemoveEvents.has(a.id);
+                        const isCollective = !!a.collectiveSessionId;
+                        const edited = isCollective ? undefined : editEventEdits[a.id];
+                        const shown = edited
+                          ? { ...a, dayOfWeek: edited.dayOfWeek, startHour: edited.startHour, endHour: edited.endHour }
+                          : a;
+                        const subjectName =
+                          a.subject?.name ??
+                          subjects.find((x) => x.id === a.subjectId)?.name ??
+                          "Asignatura";
+                        return (
+                          <div
+                            key={a.id}
+                            className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                              marked ? "opacity-60 line-through border-red-200 bg-red-50" : "border-blue-200 bg-blue-50"
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium truncate">
+                                {subjectName} · {fmtDayRange(shown.dayOfWeek, shown.startHour, shown.endHour)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {!isCollective && (
+                                <Button
+                                  type="button"
+                                  size="iconSm"
+                                  variant="outline"
+                                  disabled={marked}
+                                  onClick={() => setEventEditId(a.id)}
+                                  aria-label="Editar"
+                                  title="Editar"
+                                >
+                                  <Pencil size={14} />
+                                </Button>
+                              )}
+                              <Button
+                                type="button"
+                                size="iconSm"
+                                variant="destructive"
+                                onClick={() => {
+                                  setEditRemoveEvents((prev) => {
+                                    const n = new Set(prev);
+                                    if (n.has(a.id)) n.delete(a.id);
+                                    else n.add(a.id);
+                                    return n;
+                                  });
+                                  if (!marked) {
+                                    setEditEventEdits((prev) => {
+                                      const { [a.id]: _, ...rest } = prev;
+                                      return rest;
+                                    });
+                                  }
+                                }}
+                                aria-label={marked ? "Deshacer borrado" : "Borrar"}
+                                title={marked ? "Deshacer" : "Borrar"}
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {availEditIndex != null && editing.availableRanges?.[availEditIndex] && (
+                  <AvailabilityEditDialog
+                    open={availEditIndex != null}
+                    onOpenChange={(o) => { if (!o) setAvailEditIndex(null); }}
+                    initial={editAvailEdits[availEditIndex] ?? editing.availableRanges[availEditIndex]}
+                    onSave={(next) => {
+                      setEditAvailEdits((prev) => ({ ...prev, [availEditIndex]: next }));
+                      setEditRemoveAvail((prev) => {
+                        const n = new Set(prev);
+                        n.delete(availEditIndex);
+                        return n;
+                      });
+                      setAvailEditIndex(null);
+                    }}
+                  />
+                )}
+
+                {blockedEditIndex != null && editing.blockedRanges?.[blockedEditIndex] && (
+                  <BlockedRangeEditDialog
+                    open={blockedEditIndex != null}
+                    onOpenChange={(o) => { if (!o) setBlockedEditIndex(null); }}
+                    initial={editBlockedEdits[blockedEditIndex] ?? editing.blockedRanges?.[blockedEditIndex]}
+                    onSave={(next) => {
+                      setEditBlockedEdits((prev) => ({ ...prev, [blockedEditIndex]: next }));
+                      setEditRemoveBlocks((prev) => {
+                        const n = new Set(prev);
+                        n.delete(blockedEditIndex);
+                        return n;
+                      });
+                      setBlockedEditIndex(null);
+                    }}
+                  />
+                )}
+
+                {eventEditId != null && assignments.find((a) => a.id === eventEditId) && (
+                  <AssignmentEditDialog
+                    open={eventEditId != null}
+                    onOpenChange={(o) => { if (!o) setEventEditId(null); }}
+                    assignment={assignments.find((a) => a.id === eventEditId)!}
+                    initialEdit={
+                      editEventEdits[eventEditId]
+                    }
+                    subjectName={
+                      assignments.find((a) => a.id === eventEditId)?.subject?.name ??
+                      subjects.find((x) => x.id === assignments.find((a) => a.id === eventEditId)!.subjectId)?.name ??
+                      "Asignatura"
+                    }
+                    onSave={(next) => {
+                      setEditEventEdits((prev) => ({ ...prev, [eventEditId]: next }));
+                      setEditRemoveEvents((prev) => {
+                        const n = new Set(prev);
+                        n.delete(eventEditId);
+                        return n;
+                      });
+                      setEventEditId(null);
+                    }}
+                  />
+                )}
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" type="button" onClick={() => setEditOpen(false)} disabled={saving}><X size={14} /> Cancelar</Button>
@@ -824,7 +1213,6 @@ export default function StudentsClient() {
           assignments={assignments}
           initialStudentId={manageStudentId}
           saving={saving}
-          onApplyAvailability={applyAvailabilityChanges}
           onApplyBlocks={applyBlockChanges}
           onApplyEvents={applyEventChanges}
         />
@@ -837,8 +1225,6 @@ export default function StudentsClient() {
         subjects={subjects}
         assignments={assignments}
         initialView={calendarInitialView}
-        onRemoveBlock={scheduleLocked ? undefined : removeBlock}
-        onRemoveEvent={scheduleLocked ? undefined : removeEvent}
       />
 
       <AlertDialog open={confirmDel !== null} onOpenChange={(o) => { if (!o && !deleting) setConfirmDel(null); }}>
@@ -868,6 +1254,413 @@ export default function StudentsClient() {
         <FloatingActionButton onClick={openNew} aria-label="Nuevo alumno" />
       )}
     </div>
+  );
+}
+
+function AvailabilityEditDialog({
+  open,
+  onOpenChange,
+  initial,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initial: TimeRange;
+  onSave: (next: TimeRange) => void;
+}) {
+  const [day, setDay] = useState(String(initial.day));
+  const [start, setStart] = useState(String(initial.start));
+  const [end, setEnd] = useState(String(initial.end));
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setDay(String(initial.day));
+    setStart(String(initial.start));
+    setEnd(String(initial.end));
+    setErr("");
+  }, [open, initial.day, initial.start, initial.end]);
+
+  const startNum = Number(start);
+  const endNum = Number(end);
+  const endOptions = SCHEDULE_HOURS_END.filter((o) => Number(o.value) > startNum);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil size={16} className="text-emerald-600" />
+            Editar disponibilidad
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3 overflow-y-auto" style={{ maxHeight: "55dvh" }}>
+          <div>
+            <Label>Día</Label>
+            <Select value={day} onValueChange={setDay}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DAYS.map((d, idx) => (
+                  <SelectItem key={idx} value={String(idx)}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Hora inicio</Label>
+              <Select value={start || undefined} onValueChange={setStart}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCHEDULE_HOURS_START.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Hora fin</Label>
+              <Select value={end || undefined} onValueChange={setEnd} disabled={!start || Number.isNaN(startNum)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {endOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {err ? <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{err}</p> : null}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
+            <X size={14} /> Cancelar
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              setErr("");
+              if (!Number.isFinite(Number(day))) return;
+              if (!Number.isFinite(startNum) || !Number.isFinite(endNum)) {
+                setErr("Selecciona inicio y fin válidos");
+                return;
+              }
+              if (!(endNum > startNum)) {
+                setErr("La hora de fin debe ser posterior a la de inicio");
+                return;
+              }
+              onSave({ day: Number(day), start: startNum, end: endNum });
+            }}
+          >
+            Guardar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BlockedRangeEditDialog({
+  open,
+  onOpenChange,
+  initial,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initial: TimeRange;
+  onSave: (next: TimeRange) => void;
+}) {
+  const [kind, setKind] = useState<"block" | "class">(initial.kind === "class" ? "class" : "block");
+  const [title, setTitle] = useState(initial.title ?? "");
+  const [day, setDay] = useState(String(initial.day));
+  const [start, setStart] = useState(String(initial.start));
+  const [end, setEnd] = useState(String(initial.end));
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setKind(initial.kind === "class" ? "class" : "block");
+    setTitle(initial.title ?? "");
+    setDay(String(initial.day));
+    setStart(String(initial.start));
+    setEnd(String(initial.end));
+    setErr("");
+  }, [open, initial.day, initial.start, initial.end, initial.kind, initial.title]);
+
+  const startNum = Number(start);
+  const endNum = Number(end);
+  const endOptions = SCHEDULE_HOURS_END.filter((o) => Number(o.value) > startNum);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil size={16} className="text-blue-600" />
+            Editar ocupación
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3 overflow-y-auto" style={{ maxHeight: "55dvh" }}>
+          <div>
+            <Label>Tipo</Label>
+            <Select value={kind} onValueChange={(v) => setKind(v === "class" ? "class" : "block")}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="block">Bloqueo</SelectItem>
+                <SelectItem value="class">Clase del centro</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label>Nombre (opcional)</Label>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={kind === "class" ? "Ej: Orquesta, Lenguaje…" : "Ej: viaje, médico…"}
+            />
+          </div>
+
+          <div>
+            <Label>Día</Label>
+            <Select value={day} onValueChange={setDay}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DAYS.map((d, idx) => (
+                  <SelectItem key={idx} value={String(idx)}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Hora inicio</Label>
+              <Select value={start || undefined} onValueChange={setStart}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCHEDULE_HOURS_START.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Hora fin</Label>
+              <Select value={end || undefined} onValueChange={setEnd} disabled={!start || Number.isNaN(startNum)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {endOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {err ? <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{err}</p> : null}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
+            <X size={14} /> Cancelar
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              setErr("");
+              if (!Number.isFinite(Number(day))) return;
+              if (!Number.isFinite(startNum) || !Number.isFinite(endNum)) {
+                setErr("Selecciona inicio y fin válidos");
+                return;
+              }
+              if (!(endNum > startNum)) {
+                setErr("La hora de fin debe ser posterior a la de inicio");
+                return;
+              }
+              const next: TimeRange = {
+                day: Number(day),
+                start: startNum,
+                end: endNum,
+                kind,
+                ...(title.trim() ? { title: title.trim() } : {}),
+              };
+              onSave(next);
+            }}
+          >
+            Guardar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AssignmentEditDialog({
+  open,
+  onOpenChange,
+  assignment,
+  initialEdit,
+  subjectName,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  assignment: { id: number; dayOfWeek: number; startHour: number; endHour: number };
+  initialEdit?: { dayOfWeek: number; startHour: number; endHour: number };
+  subjectName: string;
+  onSave: (next: { dayOfWeek: number; startHour: number; endHour: number }) => void;
+}) {
+  const effective = initialEdit ?? assignment;
+
+  const [day, setDay] = useState(String(effective.dayOfWeek));
+  const [start, setStart] = useState(String(effective.startHour));
+  const [end, setEnd] = useState(String(effective.endHour));
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setDay(String(effective.dayOfWeek));
+    setStart(String(effective.startHour));
+    setEnd(String(effective.endHour));
+    setErr("");
+  }, [open, effective.dayOfWeek, effective.startHour, effective.endHour]);
+
+  const startNum = Number(start);
+  const endNum = Number(end);
+  const endOptions = SCHEDULE_HOURS_END.filter((o) => Number(o.value) > startNum);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil size={16} className="text-blue-600" />
+            Editar clase
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3 overflow-y-auto" style={{ maxHeight: "55dvh" }}>
+          <div>
+            <Label>Asignatura</Label>
+            <p className="text-sm text-gray-700 border border-gray-100 bg-gray-50 rounded-lg px-3 py-2">
+              {subjectName}
+            </p>
+          </div>
+
+          <div>
+            <Label>Día</Label>
+            <Select value={day} onValueChange={setDay}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DAYS.map((d, idx) => (
+                  <SelectItem key={idx} value={String(idx)}>
+                    {d}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Hora inicio</Label>
+              <Select value={start || undefined} onValueChange={setStart}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCHEDULE_HOURS_START.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Hora fin</Label>
+              <Select value={end || undefined} onValueChange={setEnd} disabled={!start || Number.isNaN(startNum)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {endOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {err ? <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{err}</p> : null}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
+            <X size={14} /> Cancelar
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              setErr("");
+              if (!Number.isFinite(Number(day))) return;
+              if (!Number.isFinite(startNum) || !Number.isFinite(endNum)) {
+                setErr("Selecciona inicio y fin válidos");
+                return;
+              }
+              if (!(endNum > startNum)) {
+                setErr("La hora de fin debe ser posterior a la de inicio");
+                return;
+              }
+              onSave({
+                dayOfWeek: Number(day),
+                startHour: startNum,
+                endHour: endNum,
+              });
+            }}
+          >
+            Guardar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -19,6 +19,7 @@ import { SCHEDULE_DAY_START, SCHEDULE_DAY_END, endHourFromDuration, resolveMembe
 import { carveAvailabilityAroundBlocked, getFreeHourSetsForDays, normalizeRanges, type TimeRange } from "@/lib/studentAvailability";
 import { persistAvailabilityAdds, replaceAvailabilityPieces } from "@/lib/availabilityMutations";
 import TeacherScheduleManageDialog from "@/components/TeacherScheduleManageDialog";
+import StudentScheduleManageDialog from "@/components/StudentScheduleManageDialog";
 import {
   DASHBOARD_ENDPOINTS,
   fetchApi,
@@ -29,6 +30,7 @@ import {
   onCacheStale,
   put,
   warmData,
+  flushPendingPriorityWrites,
 } from "@/lib/clientCache";
 import { hasDashboardCache } from "@/lib/pageBoot";
 import {
@@ -97,10 +99,13 @@ export default function DashboardClient() {
   const [confirmTb, setConfirmTb] = useState<TeacherBlock | null>(null);
   const [confirmDeleteAsg, setConfirmDeleteAsg] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [studentManageOpen, setStudentManageOpen] = useState(false);
+  const [savingStudentManage, setSavingStudentManage] = useState(false);
   const [autoResult, setAutoResult] = useState<AutoScheduleResult | null>(null);
   const [autoResultMode, setAutoResultMode] = useState<"preview" | "applied">("preview");
   const [pendingAutoSubjectIds, setPendingAutoSubjectIds] = useState<number[] | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  const [savingTeacher, setSavingTeacher] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(() => !hasDashboardCache());
@@ -291,6 +296,7 @@ export default function DashboardClient() {
 
   async function runAutoSchedule(subjectIds?: number[], apply = false) {
     setBusy(true);
+    await flushPendingPriorityWrites();
     const ids = subjectIds ?? pendingAutoSubjectIds;
     if (!apply) setPendingAutoSubjectIds(subjectIds);
 
@@ -303,7 +309,7 @@ export default function DashboardClient() {
       }),
     });
     setBusy(false);
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo auto-agendar");
+    if (!res.ok) { const d = await res.json().catch(() => ({})); return toast("error", d.error || "Error al auto-agendar. Comprueba que haya alumnos y disponibilidad definida."); }
     const data: AutoScheduleResult = await res.json();
     setAutoResult(data);
     if (!apply) {
@@ -315,7 +321,7 @@ export default function DashboardClient() {
     const skipped = data.skipped?.length ?? 0;
     toast("success", `Horario actualizado: ${data.assigned.length} colocados, ${data.unassigned.length} sin colocar${skipped ? `, ${skipped} omitidas` : ""}`);
     invalidateMany(["/api/assignments", "/api/subject_students"]);
-    await load({ force: true });
+    void load({ force: true });
   }
 
   async function autoScheduleSubjects(subjectIds?: number[]) {
@@ -342,14 +348,14 @@ export default function DashboardClient() {
     setSelectedAssignment(null);
     setSelectedCollectiveSession(null);
     invalidate("/api/assignments");
-    await load({ force: true });
+    void load({ force: true });
   }
 
   async function applyAvailabilityChanges(args: {
     removeIds: number[];
     adds: TimeRange[];
   }): Promise<boolean> {
-    setBusy(true);
+    setSavingTeacher(true);
     try {
       const blocked = teacherBlocks.map((b) => ({
         day: b.dayOfWeek,
@@ -385,10 +391,10 @@ export default function DashboardClient() {
           : parts.map((p, i) => (i === 0 ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" y "),
       );
       invalidate("/api/availabilities");
-      await load({ force: true });
+      void load({ force: true });
       return true;
     } finally {
-      setBusy(false);
+      setSavingTeacher(false);
     }
   }
 
@@ -396,14 +402,14 @@ export default function DashboardClient() {
     removeIds: number[];
     create?: { days: number[]; start: number; end: number; title: string };
   }): Promise<boolean> {
-    setBusy(true);
+    setSavingTeacher(true);
     let removed = 0;
     let saved = 0;
     try {
       for (const id of args.removeIds) {
         const res = await fetch(`/api/teacher_blocks?id=${id}`, { method: "DELETE" });
         if (!res.ok) {
-          toast("error", "No se pudo quitar");
+          toast("error", "No se pudo quitar el evento del profesor");
           return false;
         }
         removed++;
@@ -467,22 +473,22 @@ export default function DashboardClient() {
       );
       invalidate("/api/teacher_blocks");
       invalidate("/api/availabilities");
-      await load({ force: true });
+      void load({ force: true });
       return true;
     } finally {
-      setBusy(false);
+      setSavingTeacher(false);
     }
   }
 
   async function removeBlock(id: number): Promise<boolean> {
     const res = await fetch(`/api/teacher_blocks?id=${id}`, { method: "DELETE" });
     if (!res.ok) {
-      toast("error", "No se pudo quitar");
-      return false;
-    }
+    toast("error", "No se pudo quitar el evento del profesor");
+    return false;
+  }
     toast("success", "Evento quitado");
     invalidate("/api/teacher_blocks");
-    await load({ force: true });
+    void load({ force: true });
     return true;
   }
 
@@ -530,7 +536,7 @@ export default function DashboardClient() {
     const target = selectedCollectiveSession?.[0] ?? selectedAssignment;
     if (!target || savingEdit) return;
     if (editHourSets.startSet.size === 0) {
-      return toast("error", "No hay hueco libre para ese día");
+      return toast("error", "No hay hueco libre para ese día. Revisa la disponibilidad y eventos existentes.");
     }
     const day = Number(editAsgDay);
     const start = Number(editAsgStart);
@@ -552,12 +558,111 @@ export default function DashboardClient() {
       body: JSON.stringify(body),
     });
     setSavingEdit(false);
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar la clase. Comprueba que no haya conflictos de horario.");
     toast("success", selectedCollectiveSession ? "Sesión colectiva movida" : "Clase movida");
     setSelectedAssignment(null);
     setSelectedCollectiveSession(null);
     invalidate("/api/assignments");
-    await load({ force: true });
+    void load({ force: true });
+  }
+
+  const grades = useMemo(
+    () => Array.from(new Set(students.map((s) => ((s as unknown as { grade?: string }).grade ?? "").trim()).filter(Boolean))).sort(),
+    [students],
+  );
+
+  async function updateStudentRanges(
+    st: Student,
+    patch: { availableRanges?: TimeRange[]; blockedRanges?: TimeRange[] },
+  ): Promise<boolean> {
+    const res = await fetch("/api/students", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: st.id, name: st.name, ...patch }),
+    });
+    return res.ok;
+  }
+
+  async function applyStudentBlocks(args: {
+    removes: { student: Student; indices: number[] }[];
+    targets: Student[];
+    adds: TimeRange[];
+  }): Promise<boolean> {
+    setSavingStudentManage(true);
+    try {
+      const blockedAfterRemove = new Map<number, TimeRange[]>();
+      const availableAfterRemove = new Map<number, TimeRange[]>();
+      for (const { student, indices } of args.removes) {
+        if (indices.length === 0) continue;
+        const drop = new Set(indices);
+        const nextBlocked = (student.blockedRanges ?? []).filter((_, i) => !drop.has(i));
+        const ok = await updateStudentRanges(student, { blockedRanges: nextBlocked });
+        if (!ok) { toast("error", "No se pudo quitar el bloqueo"); return false; }
+        blockedAfterRemove.set(student.id, nextBlocked);
+        availableAfterRemove.set(student.id, student.availableRanges ?? []);
+      }
+      if (args.adds.length > 0) {
+        for (const st of args.targets) {
+          const cur = blockedAfterRemove.get(st.id) ?? st.blockedRanges ?? [];
+          const toAdd: TimeRange[] = [];
+          for (const r of args.adds) {
+            const dup = cur.some((b) => b.day === r.day && r.end > b.start && r.start < b.end) ||
+              toAdd.some((b) => b.day === r.day && r.end > b.start && r.start < b.end);
+            if (!dup) toAdd.push({ day: r.day, start: r.start, end: r.end, kind: r.kind === "class" ? "class" : "block", ...(r.title?.trim() ? { title: r.title.trim() } : {}) });
+          }
+          if (toAdd.length === 0) continue;
+          const nextBlocked = [...cur, ...toAdd];
+          const baseAvail = availableAfterRemove.get(st.id) ?? st.availableRanges ?? [];
+          const nextAvailable = carveAvailabilityAroundBlocked(baseAvail, nextBlocked);
+          const ok = await updateStudentRanges(st, { blockedRanges: nextBlocked, availableRanges: nextAvailable });
+          if (!ok) { toast("error", "No se pudo guardar el bloqueo"); return false; }
+        }
+      }
+      toast("success", "Cambios guardados");
+      invalidateMany(["/api/students", "/api/assignments"]);
+      void load({ force: true });
+      return true;
+    } finally { setSavingStudentManage(false); }
+  }
+
+  async function applyStudentEvents(args: {
+    removeIds: number[];
+    create?: {
+      targets: Student[];
+      subjectId: number;
+      days: number[];
+      start: number;
+      endForStudent: (student: Student) => number;
+    };
+  }): Promise<boolean> {
+    setSavingStudentManage(true);
+    try {
+      for (const id of args.removeIds) {
+        const res = await fetch(`/api/assignments?id=${id}`, { method: "DELETE" });
+        if (!res.ok) { toast("error", "No se pudo eliminar la clase"); return false; }
+      }
+      if (args.create) {
+        const { targets, subjectId, days, start, endForStudent } = args.create;
+        const subj = subjects.find((s) => s.id === subjectId);
+        if (!subj) { toast("error", "Asignatura no encontrada"); return false; }
+        for (const day of days) {
+          const sessionId = subj.isCollective && targets.length > 1 ? crypto.randomUUID() : null;
+          for (const st of targets) {
+            const end = endForStudent(st);
+            const res = await fetch("/api/assignments", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ subjectId, studentId: st.id, dayOfWeek: day, startHour: start, endHour: end, collectiveSessionId: sessionId }),
+            });
+            if (!res.ok) { toast("error", `No se pudo crear la clase de ${st.name}`); return false; }
+          }
+        }
+      }
+      toast("success", "Cambios guardados");
+      invalidateMany(["/api/students", "/api/assignments"]);
+      void load({ force: true });
+      return true;
+    } finally { setSavingStudentManage(false); }
   }
 
   function headerDescription() {
@@ -579,8 +684,8 @@ export default function DashboardClient() {
           disabled={loading}
         >
           <CalendarClock size={16} />
-          <span className="sm:hidden">Horario</span>
-          <span className="hidden sm:inline">Gestionar horario</span>
+          <span className="sm:hidden">Calendario</span>
+          <span className="hidden sm:inline">Añadir al calendario</span>
         </Button>
         <Button
           onClick={() => autoScheduleSubjects()}
@@ -643,6 +748,7 @@ export default function DashboardClient() {
           blocks={blocks}
           startH={SCHEDULE_DAY_START}
           endH={SCHEDULE_DAY_END}
+          hideWeekends={teacher?.hideWeekends ?? true}
           expandMobile
           allowFullscreen
           onBlockClick={
@@ -699,10 +805,36 @@ export default function DashboardClient() {
             availabilities={availabilities}
             teacherBlocks={teacherBlocks}
             assignments={assignments}
-            saving={busy}
+            displayAssignments={assignments.map((a) => ({
+              id: a.id,
+              studentName: a.student?.name ?? "Alumno",
+              subjectName: a.subject?.name ?? "Asignatura",
+              dayOfWeek: a.dayOfWeek,
+              startHour: a.startHour,
+              endHour: a.endHour,
+              collectiveSessionId: a.collectiveSessionId,
+            }))}
+            saving={savingTeacher}
             onApplyAvailability={applyAvailabilityChanges}
             onApplyBlocks={applyBlockChanges}
+            onAddStudentClass={() => setStudentManageOpen(true)}
           />
+
+          {!scheduleLocked && (
+            <StudentScheduleManageDialog
+              open={studentManageOpen}
+              onOpenChange={setStudentManageOpen}
+              students={students}
+              grades={grades}
+              subjects={subjects}
+              subjectLinks={subjectStudents}
+              teacherBlocks={teacherBlocks}
+              assignments={assignments}
+              saving={savingStudentManage}
+              onApplyBlocks={applyStudentBlocks}
+              onApplyEvents={applyStudentEvents}
+            />
+          )}
 
           <ConfirmDeleteDialogs
             confirmDeleteAsg={confirmDeleteAsg}

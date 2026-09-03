@@ -7,16 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DAYS } from "@/lib/validate";
-import { fmtHour, fmtDurationMin, slotDurationMin, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END } from "@/lib/hours";
-import type { ActionType } from "./types";
+import { fmtHour, SCHEDULE_HOURS_START, SCHEDULE_HOURS_END } from "@/lib/hours";
 
 const HOURS_START = SCHEDULE_HOURS_START;
 const HOURS_END = SCHEDULE_HOURS_END;
 
 interface ScheduleSlotFormProps {
-  action: ActionType;
-  blockTitle: string;
-  onBlockTitleChange: (value: string) => void;
+  title?: { value: string; onChange: (value: string) => void; label: string; placeholder: string };
   days: Set<number>;
   onToggleDay: (day: number) => void;
   start: string;
@@ -24,9 +21,10 @@ interface ScheduleSlotFormProps {
   end: string;
   onEndChange: (value: string) => void;
   hourSets: { startSet: Set<string>; endSet: Set<string> };
-  eventSlotDuration: number | null;
-  onAddAvailability: () => void;
-  onAddBlocks: () => void;
+  startLabel?: string;
+  endLabel?: string;
+  onAdd?: () => void;
+  addLabel?: string;
 }
 
 function hourItem(o: { value: string; label: string }, allowed: Set<string>) {
@@ -35,9 +33,7 @@ function hourItem(o: { value: string; label: string }, allowed: Set<string>) {
 }
 
 export default function ScheduleSlotForm({
-  action,
-  blockTitle,
-  onBlockTitleChange,
+  title,
   days,
   onToggleDay,
   start,
@@ -45,23 +41,21 @@ export default function ScheduleSlotForm({
   end,
   onEndChange,
   hourSets,
-  eventSlotDuration,
-  onAddAvailability,
-  onAddBlocks,
+  startLabel = "Desde",
+  endLabel = "Hasta",
+  onAdd,
+  addLabel,
 }: ScheduleSlotFormProps) {
   return (
     <div className="rounded-lg border border-gray-100 bg-gray-50/80 p-3 space-y-3">
-      <p className="text-xs font-medium text-gray-600">
-        {action === "event" ? "Nueva clase" : action === "availability" ? "Nueva franja de disponibilidad" : "Nuevo bloqueo"}
-      </p>
-      {action === "block" && (
+      {title && (
         <div>
-          <Label htmlFor="st-block-title">Nombre</Label>
+          <Label htmlFor="st-slot-title">{title.label}</Label>
           <Input
-            id="st-block-title"
-            value={blockTitle}
-            onChange={(e) => onBlockTitleChange(e.target.value)}
-            placeholder="Ej: Extraescolar, viaje, médico…"
+            id="st-slot-title"
+            value={title.value}
+            onChange={(e) => title.onChange(e.target.value)}
+            placeholder={title.placeholder}
           />
         </div>
       )}
@@ -89,7 +83,7 @@ export default function ScheduleSlotForm({
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <Label>{action === "event" ? "Hora de inicio" : "Desde"}</Label>
+          <Label>{startLabel}</Label>
           <Select value={start || undefined} onValueChange={onStartChange} disabled={days.size === 0 || hourSets.startSet.size === 0}>
             <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
             <SelectContent>
@@ -98,35 +92,22 @@ export default function ScheduleSlotForm({
           </Select>
         </div>
         <div>
-          <Label>{action === "event" ? "Hora de fin" : "Hasta"}</Label>
+          <Label>{endLabel}</Label>
           <Select value={end || undefined} onValueChange={onEndChange} disabled={start === "" || hourSets.endSet.size === 0}>
             <SelectTrigger><SelectValue placeholder="Selecciona…" /></SelectTrigger>
             <SelectContent>
-              {action === "event"
-                ? Array.from(hourSets.endSet)
-                    .sort((a, b) => Number(a) - Number(b))
-                    .map((v) => (
-                      <SelectItem key={v} value={v}>{fmtHour(Number(v))}</SelectItem>
-                    ))
-                : HOURS_END.map((o) => hourItem(o, hourSets.endSet))}
+              {Array.from(hourSets.endSet)
+                .sort((a, b) => Number(a) - Number(b))
+                .map((v) => (
+                  <SelectItem key={v} value={v}>{fmtHour(Number(v))}</SelectItem>
+                ))}
             </SelectContent>
           </Select>
         </div>
       </div>
-      {action === "event" && start !== "" && end !== "" && Number(end) > Number(start) && (
-        <p className="text-xs text-gray-500">
-          Esta clase: {fmtDurationMin(slotDurationMin(Number(start), Number(end)))}
-          {eventSlotDuration != null ? ` (máx. ${fmtDurationMin(eventSlotDuration)})` : ""}
-        </p>
-      )}
-      {action === "availability" && (
-        <Button type="button" variant="outline" className="w-full" onClick={onAddAvailability}>
-          <Plus size={14} /> Añadir franja{days.size > 1 ? "s" : ""}
-        </Button>
-      )}
-      {action === "block" && (
-        <Button type="button" variant="outline" className="w-full" onClick={onAddBlocks}>
-          <Plus size={14} /> Añadir bloqueo{days.size > 1 ? "s" : ""}
+      {onAdd && (
+        <Button type="button" variant="outline" className="w-full" onClick={onAdd}>
+          <Plus size={14} /> {addLabel ?? "Añadir"}
         </Button>
       )}
     </div>

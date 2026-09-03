@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
-  Plus, Save, Inbox, X, BookOpen, ChevronRight,
+  Plus, Save, Inbox, X, BookOpen, ChevronRight, ArrowLeft,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -24,7 +24,7 @@ import { useToast } from "@/components/Toast";
 import PageHeader from "@/components/PageHeader";
 import EmptyState from "@/components/EmptyState";
 import { ChipGroupSkeleton, MemberCardSkeleton } from "@/components/skeletons";
-import { warmData, put, invalidate, hasFresh, hasFreshAll, fetchApi, onCacheStale } from "@/lib/clientCache";
+import { warmData, put, invalidate, hasFresh, hasFreshAll, fetchApi, onCacheStale, queuePriorityWrite, clearPriorityWrites, flushPendingPriorityWrites } from "@/lib/clientCache";
 import { hasRequestsCache } from "@/lib/pageBoot";
 import { SCHEDULE_LOCK_CHANGED_EVENT } from "@/lib/useTeacherProfile";
 import { DAYS } from "@/lib/validate";
@@ -312,6 +312,28 @@ export default function RequestsClient() {
 
   // Reordenar prioridad del alumno (subject_students) — swap con vecino
   async function moveMember(memberId: number, dir: "up" | "down") {
+    // Optimista: swap local + cache
+    const sorted = [...members].sort((a, b) => a.priority - b.priority || a.id - b.id);
+    const idx = sorted.findIndex((m) => m.id === memberId);
+    const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= sorted.length) return;
+    const priA = sorted[idx].priority;
+    const priB = sorted[swapIdx].priority;
+    const idA = sorted[idx].id;
+    const idB = sorted[swapIdx].id;
+    setMembers((cur) => cur.map((c) => {
+      if (c.id === idA) return { ...c, priority: priB };
+      if (c.id === idB) return { ...c, priority: priA };
+      return c;
+    }));
+    const cached = warmData<SubjectStudent[]>("/api/subject_students");
+    if (cached) {
+      put("/api/subject_students", cached.map((c) => {
+        if (c.id === idA) return { ...c, priority: priB };
+        if (c.id === idB) return { ...c, priority: priA };
+        return c;
+      }));
+    }
     setBusy(true);
     const res = await fetch("/api/subject_students", {
       method: "PUT",
@@ -319,13 +341,45 @@ export default function RequestsClient() {
       body: JSON.stringify({ id: memberId, dir }),
     });
     setBusy(false);
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    invalidate("/api/subject_students");
-    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true, force: true });
+    if (!res.ok) {
+      toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    }
+    // Refetch sin invalidate: no borra cache optimista
+    const ssAll = await fetchApi<SubjectStudent[]>("/api/subject_students");
+    if (ssAll) {
+      setMembers(ssAll.filter((x) => x.subjectId === (activeSubjectId ?? 0)));
+      put("/api/subject_students", ssAll);
+    }
   }
 
   // Reordenar preferencia de posibilidad (slot_requests) — swap con vecino
   async function moveSlot(slotId: number, dir: "up" | "down") {
+    // Optimista: swap local + cache
+    const slot = slotRequests.find((r) => r.id === slotId);
+    if (!slot) return;
+    const group = slotRequests
+      .filter((r) => r.studentId === slot.studentId && r.subjectId === slot.subjectId)
+      .sort((a, b) => a.prefOrder - b.prefOrder || a.id - b.id);
+    const idx = group.findIndex((r) => r.id === slotId);
+    const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= group.length) return;
+    const orderA = group[idx].prefOrder;
+    const orderB = group[swapIdx].prefOrder;
+    const idA = group[idx].id;
+    const idB = group[swapIdx].id;
+    setSlotRequests((cur) => cur.map((r) => {
+      if (r.id === idA) return { ...r, prefOrder: orderB };
+      if (r.id === idB) return { ...r, prefOrder: orderA };
+      return r;
+    }));
+    const cached = warmData<SlotRequest[]>("/api/slot_requests");
+    if (cached) {
+      put("/api/slot_requests", cached.map((c) => {
+        if (c.id === idA) return { ...c, prefOrder: orderB };
+        if (c.id === idB) return { ...c, prefOrder: orderA };
+        return c;
+      }));
+    }
     setBusy(true);
     const res = await fetch("/api/slot_requests", {
       method: "PUT",
@@ -333,36 +387,55 @@ export default function RequestsClient() {
       body: JSON.stringify({ id: slotId, dir }),
     });
     setBusy(false);
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    invalidate("/api/slot_requests");
-    if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true, force: true });
+    if (!res.ok) {
+      toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    }
+    // Refetch sin invalidate
+    const srAll = await fetchApi<SlotRequest[]>("/api/slot_requests");
+    if (srAll) {
+      setSlotRequests(srAll.filter((x) => x.subjectId === (activeSubjectId ?? 0)));
+      put("/api/slot_requests", srAll);
+    }
   }
 
-  const pendingSync = useRef<{ id: number; to: number }[]>([]);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncing = useRef(false);
 
   const memberSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function handleMemberReorder(next: SubjectStudent[]) {
-    setMembers((cur) =>
-      next.map((n) => {
-        const base = cur.find((c) => c.id === n.id);
-        return base ? { ...base, priority: next.findIndex((x) => x.id === n.id) + 1 } : n;
-      })
-    );
+    const updated = next.map((n, i) => {
+      const base = members.find((c) => c.id === n.id);
+      return base ? { ...base, priority: i + 1 } : { ...n, priority: i + 1 };
+    });
+    setMembers(updated);
+    // Persistir en cache para navegación inmediata
+    const cached = warmData<SubjectStudent[]>("/api/subject_students");
+    if (cached) {
+      const prioMap = new Map(updated.map((u) => [u.id, u.priority]));
+      put("/api/subject_students", cached.map((c) => {
+        const newPri = prioMap.get(c.id);
+        return newPri != null ? { ...c, priority: newPri } : c;
+      }));
+    }
+    for (let i = 0; i < next.length; i++) {
+      if (next[i].priority !== i + 1) {
+        queuePriorityWrite("/api/subject_students", next[i].id, i + 1);
+      }
+    }
     if (memberSyncTimer.current) clearTimeout(memberSyncTimer.current);
     memberSyncTimer.current = setTimeout(async () => {
-      for (let i = 0; i < next.length; i++) {
-        if (next[i].priority !== i + 1) {
-          await fetch("/api/subject_students", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: next[i].id, to: i + 1 }),
-          });
-        }
+      syncing.current = true;
+      try {
+        await flushPendingPriorityWrites();
+      } finally {
+        syncing.current = false;
       }
-      invalidate("/api/subject_students");
-      if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true, force: true });
+      const ssAll = await fetchApi<SubjectStudent[]>("/api/subject_students");
+      if (ssAll) {
+        setMembers(ssAll.filter((x) => x.subjectId === (activeSubjectId ?? 0)));
+        put("/api/subject_students", ssAll);
+      }
     }, 400);
   }
 
@@ -371,33 +444,41 @@ export default function RequestsClient() {
       .filter((x) => x.studentId === studentId && x.subjectId === subjectId)
       .sort((a, b) => a.prefOrder - b.prefOrder || a.id - b.id);
     const moved = prev.find((x, i) => next[i]?.id !== x.id);
-    // optimista: renumerar en estado al instante
+    // optimista: renumerar en estado + cache al instante
+    const orderMap = new Map(next.map((x, i) => [x.id, i + 1]));
     setSlotRequests((cur) =>
       cur.map((r) => {
         if (r.studentId !== studentId || r.subjectId !== subjectId) return r;
-        const ni = next.findIndex((x) => x.id === r.id);
-        return ni >= 0 ? { ...r, prefOrder: ni + 1 } : r;
+        const ni = orderMap.get(r.id);
+        return ni != null ? { ...r, prefOrder: ni } : r;
       })
     );
+    // Persistir en cache para navegación inmediata
+    const cached = warmData<SlotRequest[]>("/api/slot_requests");
+    if (cached) {
+      put("/api/slot_requests", cached.map((c) => {
+        const newOrder = orderMap.get(c.id);
+        return newOrder != null ? { ...c, prefOrder: newOrder } : c;
+      }));
+    }
     if (!moved) return;
     const to = next.findIndex((x) => x.id === moved.id) + 1;
     if (to < 1) return;
-    pendingSync.current = pendingSync.current.filter((p) => p.id !== moved.id);
-    pendingSync.current.push({ id: moved.id, to });
+    queuePriorityWrite("/api/slot_requests", moved.id, to);
     if (syncTimer.current) clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => {
-      const items = [...pendingSync.current];
-      pendingSync.current = [];
       void (async () => {
-        for (const p of items) {
-          await fetch("/api/slot_requests", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: p.id, to: p.to }),
-          });
+        syncing.current = true;
+        try {
+          await flushPendingPriorityWrites();
+        } finally {
+          syncing.current = false;
         }
-        invalidate("/api/slot_requests");
-        if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { silent: true, force: true });
+        const srAll = await fetchApi<SlotRequest[]>("/api/slot_requests");
+        if (srAll) {
+          setSlotRequests(srAll.filter((x) => x.subjectId === (activeSubjectId ?? 0)));
+          put("/api/slot_requests", srAll);
+        }
       })();
     }, 400);
   }
@@ -409,7 +490,7 @@ export default function RequestsClient() {
     setDeleting(false);
     setConfirmTarget(null);
     if (!res.ok) return toast("error", "No se pudo borrar");
-    invalidate("/api/slot_requests"); toast("success", "Solicitud borrada");
+    invalidate("/api/slot_requests"); toast("success", "Preferencia borrada");
     if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { force: true });
   }
 
@@ -523,7 +604,7 @@ export default function RequestsClient() {
     });
     setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    invalidate("/api/slot_requests"); toast("success", "Solicitud añadida");
+    invalidate("/api/slot_requests"); toast("success", "Preferencia añadida");
     setAddOpen(false);
     await loadSubjectData(activeSubjectId, { force: true });
   }
@@ -570,7 +651,7 @@ export default function RequestsClient() {
     });
     setSaving(false);
     if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    invalidate("/api/slot_requests"); toast("success", "Solicitud actualizada");
+    invalidate("/api/slot_requests"); toast("success", "Preferencia actualizada");
     setEditOpen(false);
     if (activeSubjectId !== null) await loadSubjectData(activeSubjectId, { force: true });
   }
@@ -582,9 +663,14 @@ export default function RequestsClient() {
 
   return (
     <div className="page-stack">
+      <div>
+        <Button asChild variant="outline">
+          <Link href="/subjects"><ArrowLeft size={16} /> Asignaturas</Link>
+        </Button>
+      </div>
       <PageHeader
         icon={Inbox}
-        title="Solicitudes de horario"
+        title="Preferencia horaria"
         description={
           activeSubject
             ? `Preferencias de horario en ${activeSubject.name}.`
@@ -596,15 +682,6 @@ export default function RequestsClient() {
               <Link href="/subjects">
                 <Plus size={16} />
                 <span className="hidden sm:inline">Nueva asignatura</span>
-              </Link>
-            </Button>
-          ) : activeSubject ? (
-            <Button asChild>
-              <Link href={`/subjects/${activeSubject.id}`}>
-                <BookOpen size={16} />
-                <span className="sm:hidden">Asignatura</span>
-                <span className="hidden sm:inline">Ver asignatura</span>
-                <ChevronRight size={16} className="opacity-60" />
               </Link>
             </Button>
           ) : undefined
@@ -622,7 +699,7 @@ export default function RequestsClient() {
             <EmptyState
               icon={BookOpen}
               title="Sin asignaturas"
-              description="Crea una asignatura antes de gestionar solicitudes."
+              description="Crea una asignatura antes de gestionar preferencias."
               actionLabel="Crear asignatura"
               actionHref="/subjects"
             />
@@ -717,7 +794,7 @@ export default function RequestsClient() {
         <EmptyState
           icon={Inbox}
           title="Sin alumnos inscritos"
-          description={`Añade alumnos a ${activeSubject.name} para gestionar sus solicitudes.`}
+          description={`Añade alumnos a ${activeSubject.name} para gestionar sus preferencias.`}
           actionLabel={scheduleLocked ? undefined : "Añadir alumnos"}
           actionHref={scheduleLocked ? undefined : `/subjects/${activeSubject.id}`}
         />
@@ -727,7 +804,7 @@ export default function RequestsClient() {
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Añadir solicitud de horario</DialogTitle>
+            <DialogTitle>Añadir preferencia horaria</DialogTitle>
             <DialogDescription>
               Alumno: <strong>{members.find((m) => m.studentId === addStudentId)?.student.name ?? "—"}</strong>
             </DialogDescription>
@@ -738,7 +815,7 @@ export default function RequestsClient() {
               <p className="text-sm text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
                 Total a cubrir: <strong>{fmtDurationMin(addRequiredDuration)}</strong>
                 {activeSubject?.isCollective ? " (sesión colectiva)" : ""}.
-                {" "}Puedes dividirla (p. ej. 2×30 min) con varias solicitudes.
+                {" "}Puedes dividirla (p. ej. 2×30 min) con varias preferencias.
               </p>
             )}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -799,7 +876,7 @@ export default function RequestsClient() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Editar solicitud</DialogTitle>
+            <DialogTitle>Editar preferencia</DialogTitle>
             <DialogDescription>Cambia día u hora.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -807,7 +884,7 @@ export default function RequestsClient() {
               <p className="text-sm text-gray-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
                 Total a cubrir: <strong>{fmtDurationMin(editRequiredDuration)}</strong>
                 {activeSubject?.isCollective ? " (sesión colectiva)" : ""}.
-                {" "}Puedes usar una franja más corta y completar con otra solicitud.
+                {" "}Puedes usar una franja más corta y completar con otra preferencia.
               </p>
             )}
             <div className="sm:col-span-3">

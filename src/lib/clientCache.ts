@@ -419,3 +419,57 @@ export function prefetchAll(opts: { delayMs?: number; skip?: readonly string[] }
     window.setTimeout(run, delayMs);
   }
 }
+
+// ─── Pending priority sync queue ───
+// Stores pending priority writes so any page (e.g. dashboard) can flush them
+// before auto-scheduling, even if the originating component already unmounted.
+
+type PendingWrite = { endpoint: string; id: number; to: number };
+
+const pendingPriorityKey = "__gestorPendingPriority";
+
+function getPendingWrites(): PendingWrite[] {
+  if (typeof window === "undefined") return [];
+  return (window as unknown as { [pendingPriorityKey]?: PendingWrite[] })[pendingPriorityKey] ?? [];
+}
+
+function setPendingWrites(writes: PendingWrite[]) {
+  if (typeof window === "undefined") return;
+  (window as unknown as Record<string, unknown>)[pendingPriorityKey] = writes;
+}
+
+/** Queue a priority write for deferred sync. */
+export function queuePriorityWrite(endpoint: string, id: number, to: number) {
+  const writes = getPendingWrites().filter((w) => !(w.endpoint === endpoint && w.id === id));
+  writes.push({ endpoint, id, to });
+  setPendingWrites(writes);
+}
+
+/** Remove queued writes for an endpoint (after successful sync). */
+export function clearPriorityWrites(endpoint?: string) {
+  if (endpoint) {
+    setPendingWrites(getPendingWrites().filter((w) => w.endpoint !== endpoint));
+  } else {
+    setPendingWrites([]);
+  }
+}
+
+/** Flush all pending priority writes to the server. Call before auto-schedule. */
+export async function flushPendingPriorityWrites(): Promise<void> {
+  const writes = getPendingWrites();
+  if (writes.length === 0) return;
+  setPendingWrites([]);
+  for (const w of writes) {
+    await fetch(w.endpoint, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: w.id, to: w.to }),
+    });
+  }
+  // Refetch to ensure cache is in sync
+  const endpoints = [...new Set(writes.map((w) => w.endpoint))];
+  for (const ep of endpoints) {
+    const data = await fetchApiJson(ep);
+    if (data.ok) put(ep, data.data);
+  }
+}

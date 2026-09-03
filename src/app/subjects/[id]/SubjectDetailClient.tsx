@@ -19,7 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import AutoScheduleResultDialog, { type AutoScheduleResult } from "@/components/AutoScheduleResultDialog";
 import { fmtDurationMin, collectSubjectDurationOptions, SESSION_PART_MIN, maxSessionParts, MIN_DURATION_MIN, DURATION_STEP_MIN } from "@/lib/hours";
 import SubjectDurationBadges from "@/components/SubjectDurationBadges";
-import { fetchApi, invalidate, invalidateMany, onCacheStale, put, subjectGradeKey, warmData } from "@/lib/clientCache";
+import { fetchApi, invalidate, invalidateMany, onCacheStale, put, subjectGradeKey, warmData, queuePriorityWrite, clearPriorityWrites, flushPendingPriorityWrites } from "@/lib/clientCache";
 import { SubjectDetailSkeleton } from "@/components/skeletons";
 import { COPY } from "@/lib/copy";
 import type { ConfirmTarget, GradeDuration, SlotRequest, Student, Subject, SubjectStudent } from "./types";
@@ -167,6 +167,27 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     }
   }
 
+  /** Recarga silenciosa: no muestra skeleton. */
+  async function loadSilent() {
+    hydrateFromCache();
+    try {
+      const [allSubjects, ssAll, st, srAll, gd, teachers] = await Promise.all([
+        fetchApi<Subject[]>("/api/subjects"),
+        fetchApi<SubjectStudent[]>("/api/subject_students"),
+        fetchApi<Student[]>("/api/students"),
+        fetchApi<SlotRequest[]>("/api/slot_requests"),
+        fetchApi<GradeDuration[]>(gradeKey),
+        fetchApi<{ scheduleFixed?: boolean }[]>("/api/teachers"),
+      ]);
+      if (allSubjects) { setSubject(allSubjects.find((x) => x.id === id) ?? null); put("/api/subjects", allSubjects); }
+      if (ssAll) { setMembers(ssAll.filter((x) => x.subjectId === id)); put("/api/subject_students", ssAll); }
+      if (st) { setAllStudents(st); put("/api/students", st); }
+      if (srAll) { setSlotRequests(srAll.filter((x) => x.subjectId === id)); put("/api/slot_requests", srAll); }
+      if (gd) { setGradeDurations(gd); put(gradeKey, gd); }
+      if (teachers) { setTeacherScheduleFixed(Boolean(teachers[0]?.scheduleFixed)); put("/api/teachers", teachers); }
+    } catch { /* ignore */ }
+  }
+
   useLayoutEffect(() => {
     if (hydrateFromCache()) setLoading(false);
   }, [id]);
@@ -174,7 +195,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
   useEffect(() => { void load(); }, [id]);
 
   useEffect(() => {
-    const offStale = onCacheStale(() => { void load(); });
+    const offStale = onCacheStale(() => { void loadSilent(); });
     return offStale;
   }, [id]);
 
@@ -292,7 +313,34 @@ export default function SubjectDetailClient({ id }: { id: number }) {
     await load();
   }
 
+  function applyMemberSwap(memberId: number, dir: "up" | "down") {
+    const sorted = [...members].sort((a, b) => a.priority - b.priority || a.id - b.id);
+    const idx = sorted.findIndex((m) => m.id === memberId);
+    const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= sorted.length) return;
+    const priA = sorted[idx].priority;
+    const priB = sorted[swapIdx].priority;
+    const idA = sorted[idx].id;
+    const idB = sorted[swapIdx].id;
+    // State local
+    setMembers((cur) => cur.map((c) => {
+      if (c.id === idA) return { ...c, priority: priB };
+      if (c.id === idB) return { ...c, priority: priA };
+      return c;
+    }));
+    // Cache global (para navegación inmediata)
+    const cached = warmData<SubjectStudent[]>("/api/subject_students");
+    if (cached) {
+      put("/api/subject_students", cached.map((c) => {
+        if (c.id === idA) return { ...c, priority: priB };
+        if (c.id === idB) return { ...c, priority: priA };
+        return c;
+      }));
+    }
+  }
+
   async function moveMember(memberId: number, dir: "up" | "down") {
+    applyMemberSwap(memberId, dir);
     setBusy(true);
     const res = await fetch("/api/subject_students", {
       method: "PUT",
@@ -300,36 +348,68 @@ export default function SubjectDetailClient({ id }: { id: number }) {
       body: JSON.stringify({ id: memberId, dir }),
     });
     setBusy(false);
-    if (!res.ok) return toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
-    invalidate("/api/subject_students");
-    await load();
+    if (!res.ok) {
+      toast("error", (await res.json().catch(() => ({}))).error || "No se pudo guardar");
+    }
+    // Refetch silencioso para sincronizar con servidor (sin invalidate previo)
+    const ssAll = await fetchApi<SubjectStudent[]>("/api/subject_students");
+    if (ssAll) {
+      setMembers(ssAll.filter((x) => x.subjectId === id));
+      put("/api/subject_students", ssAll);
+    }
   }
 
   const memberSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncing = useRef(false);
 
   function handleMemberReorder(next: SubjectStudent[]) {
-    // renumeracion unica optimista
-    setMembers((cur) =>
-      next.map((n) => {
-        const base = cur.find((c) => c.id === n.id);
-        return base ? { ...base, priority: next.findIndex((x) => x.id === n.id) + 1 } : n;
-      })
-    );
+    const updated = next.map((n, i) => {
+      const base = members.find((c) => c.id === n.id);
+      return base ? { ...base, priority: i + 1 } : { ...n, priority: i + 1 };
+    });
+    setMembers(updated);
+    // Persistir en cache para navegación inmediata
+    const cached = warmData<SubjectStudent[]>("/api/subject_students");
+    if (cached) {
+      const prioMap = new Map(updated.map((u) => [u.id, u.priority]));
+      put("/api/subject_students", cached.map((c) => {
+        const newPri = prioMap.get(c.id);
+        return newPri != null ? { ...c, priority: newPri } : c;
+      }));
+    }
+    // Queue writes para que sobrevivan al desmontaje
+    for (let i = 0; i < next.length; i++) {
+      if (next[i].priority !== i + 1) {
+        queuePriorityWrite("/api/subject_students", next[i].id, i + 1);
+      }
+    }
     if (memberSyncTimer.current) clearTimeout(memberSyncTimer.current);
     memberSyncTimer.current = setTimeout(async () => {
-      for (let i = 0; i < next.length; i++) {
-        if (next[i].priority !== i + 1) {
-          await fetch("/api/subject_students", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: next[i].id, to: i + 1 }),
-          });
-        }
+      syncing.current = true;
+      try {
+        await flushPendingPriorityWrites();
+      } finally {
+        syncing.current = false;
       }
-      invalidate("/api/subject_students");
-      await load();
+      const ssAll = await fetchApi<SubjectStudent[]>("/api/subject_students");
+      if (ssAll) {
+        setMembers(ssAll.filter((x) => x.subjectId === id));
+        put("/api/subject_students", ssAll);
+      }
     }, 400);
   }
+
+  // Flush pending writes al desmontar (navegación fuera)
+  useEffect(() => {
+    return () => {
+      if (memberSyncTimer.current) {
+        clearTimeout(memberSyncTimer.current);
+        memberSyncTimer.current = null;
+        // Fire-and-forget: flush queued writes en background
+        void flushPendingPriorityWrites();
+      }
+    };
+  }, []);
 
   async function confirmDelete() {
     if (!confirmTarget || deleting) return;
@@ -446,8 +526,24 @@ export default function SubjectDetailClient({ id }: { id: number }) {
 
   const confirmMessage = confirmTarget ? confirmTarget.label : "";
 
+  /** Fuerza la sincronización pendiente del drag antes de continuar. */
+  async function flushPendingSync() {
+    if (memberSyncTimer.current) {
+      clearTimeout(memberSyncTimer.current);
+      memberSyncTimer.current = null;
+    }
+    if (syncing.current) {
+      await new Promise<void>((resolve) => {
+        const check = () => { if (!syncing.current) resolve(); else setTimeout(check, 50); };
+        check();
+      });
+    }
+    await flushPendingPriorityWrites();
+  }
+
   async function runAutoSchedule(apply = false) {
     setBusy(true);
+    await flushPendingSync();
     const res = await fetch("/api/auto_schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -571,7 +667,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
               </div>
             )}
             <Button asChild variant="outline">
-              <Link href="/requests"><ClipboardList size={16} /> Solicitudes</Link>
+              <Link href="/requests"><ClipboardList size={16} /> Preferencia horaria</Link>
             </Button>
           </div>
         </div>
@@ -638,7 +734,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                     </Badge>
                   )}
                   {subject.isCollective && reqs.length > 0 && (
-                    <Badge variant="gray">{reqs.length} solicitud{reqs.length === 1 ? "" : "es"}</Badge>
+                    <Badge variant="gray">{reqs.length} preferencia{reqs.length === 1 ? "" : "s"}</Badge>
                   )}
                 </MemberRow>
               );
@@ -652,8 +748,8 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                 return (
                   <MemberRow key={m.id} m={m} className="flex items-center">
                     <div className="inline-flex items-center gap-1">
-                      <Button size="iconSm" variant="ghost" onClick={() => moveMember(m.id, "up")} disabled={busy || mi === 0} aria-label="Subir prioridad"><ArrowUp size={14} /></Button>
-                      <Button size="iconSm" variant="ghost" onClick={() => moveMember(m.id, "down")} disabled={busy || mi === sortedMembers.length - 1} aria-label="Bajar prioridad"><ArrowDown size={14} /></Button>
+                      <Button size="iconSm" variant="ghost" onClick={() => moveMember(m.id, "up")} disabled={busy || syncing.current || mi === 0} aria-label="Subir prioridad"><ArrowUp size={14} /></Button>
+                      <Button size="iconSm" variant="ghost" onClick={() => moveMember(m.id, "down")} disabled={busy || syncing.current || mi === sortedMembers.length - 1} aria-label="Bajar prioridad"><ArrowDown size={14} /></Button>
                     </div>
                     <span className="font-medium">{m.student.name}</span>
                     {m.student.grade && <span className="text-gray-400 text-xs">{m.student.grade}</span>}
@@ -673,7 +769,7 @@ export default function SubjectDetailClient({ id }: { id: number }) {
                       </Badge>
                     )}
                     {subject.isCollective && reqs.length > 0 && (
-                      <Badge variant="gray">{reqs.length} solicitud{reqs.length === 1 ? "" : "es"}</Badge>
+                      <Badge variant="gray">{reqs.length} preferencia{reqs.length === 1 ? "" : "s"}</Badge>
                     )}
                     <div className="flex gap-1.5 ml-auto">
                       <Button size="iconSm" variant="outline" onClick={() => openEditMember(m)} aria-label="Editar"><Pencil size={14} /></Button>
